@@ -1,0 +1,160 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// ===========================================================
+// CONFIGURATION SECTION
+// ===========================================================
+
+// Your Wi-Fi credentials
+const char* WIFI_SSID     = "Three_7F2C30";
+const char* WIFI_PASSWORD = "5sQuXs2zv22y2z5";
+
+// Your FastAPI endpoint using your laptop’s LAN IP
+// Example: http://192.168.1.23:8000/ingest
+const char* INGEST_URL    = "http://192.168.0.6:8000/ingest";
+
+// Tag to identify which ESP32 sent the scan
+const char* NODE_TAG      = "ESP32-LAB-01";
+
+// ===========================================================
+// FUNCTION DECLARATIONS
+// ===========================================================
+void connectWiFi();
+void startWiFiScan();
+void postScannedNetworks(int16_t networksFound);
+int  httpPostPayload(const String& payload);
+
+// ===========================================================
+// CONNECT TO WIFI (safe version — avoids config errors)
+// ===========================================================
+void connectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;  // already connected
+
+  Serial.printf("Connecting to %s\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.disconnect(true, true); // clear any old connection state
+  delay(200);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 15000) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("✅ WiFi connected! IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("⚠️ WiFi connect timeout — will retry in loop.");
+  }
+}
+
+// ===========================================================
+// START A BACKGROUND WIFI SCAN
+// ===========================================================
+void startWiFiScan() {
+  if (WiFi.status() != WL_CONNECTED) return; // only scan if connected
+  Serial.println("🔍 Starting async Wi-Fi scan...");
+  WiFi.scanDelete();               // clear old results
+  WiFi.scanNetworks(true, true);   // async mode, include hidden networks
+}
+
+// ===========================================================
+// HTTP POST HELPER — send JSON payload to FastAPI
+// ===========================================================
+int httpPostPayload(const String& payload) {
+  HTTPClient http;
+  http.begin(INGEST_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  int code = http.POST(payload);
+  http.end();
+
+  Serial.printf("📡 POST /ingest -> %d\n", code);
+  return code;
+}
+
+// ===========================================================
+// BUILD JSON ARRAY FROM SCAN RESULTS + SEND TO SERVER
+// ===========================================================
+void postScannedNetworks(int16_t networksFound) {
+  if (networksFound <= 0) return;
+
+  StaticJsonDocument<4096> doc;
+  JsonArray arr = doc.to<JsonArray>();
+
+  uint32_t ts = millis();
+
+  for (int i = 0; i < networksFound; ++i) {
+    JsonObject o = arr.createNestedObject();
+    o["node"]    = NODE_TAG;
+    o["ts"]      = ts;
+    o["ssid"]    = WiFi.SSID(i);
+    o["bssid"]   = WiFi.BSSIDstr(i);
+    o["rssi"]    = WiFi.RSSI(i);
+    o["channel"] = WiFi.channel(i);
+    o["enc"]     = WiFi.encryptionType(i);
+  }
+
+  String payload;
+  serializeJson(arr, payload);
+  httpPostPayload(payload);
+
+  WiFi.scanDelete();  // clear results
+}
+
+// ===========================================================
+// SETUP
+// ===========================================================
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  connectWiFi();      // connect to Wi-Fi first
+  startWiFiScan();    // start initial scan
+}
+
+// ===========================================================
+// MAIN LOOP
+// ===========================================================
+void loop() {
+  static unsigned long lastCheck = 0;
+
+  // Every 5 seconds, check Wi-Fi connection
+  if (millis() - lastCheck > 5000) {
+    lastCheck = millis();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("⚠️ WiFi dropped. Reconnecting...");
+      connectWiFi();
+
+      // Only start a new scan if reconnection worked
+      if (WiFi.status() == WL_CONNECTED) {
+        startWiFiScan();
+      }
+      return;
+    }
+  }
+
+  // Handle async scan completion
+  int16_t st = WiFi.scanComplete();
+  if (st == WIFI_SCAN_RUNNING) {
+    // still scanning, do nothing
+    return;
+  } else if (st >= 0) {
+    // scan done, send results
+    Serial.printf("📶 Found %d networks.\n", st);
+    postScannedNetworks(st);
+    startWiFiScan();  // start next scan
+  } else if (st == WIFI_SCAN_FAILED) {
+    Serial.println("❌ Scan failed. Restarting...");
+    startWiFiScan();
+  }
+
+  delay(250); // small heartbeat delay
+}

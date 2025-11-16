@@ -99,7 +99,6 @@ venv.bak/
 *.swp
 *.swo
 *.log
-*.db
 *.sqlite
 *.egg-info/
 dist/

@@ -1,5 +1,5 @@
 .vscode/settings.json
-esp32-wifi-pipeline/wifi_scans.db
+esp32-wifi-pipeline/wifi_scans.db	esp32-wifi-pipeline/wifi_scans.db
 esp32-wifi-pipeline/wifi_scans.db
 esp32-wifi-pipeline/.venv/lib/python3.9/site-packages/sqlalchemy/util/__init__.py
 esp32-wifi-pipeline/.venv/lib/python3.9/site-packages/sqlalchemy/util/_collections.py
@@ -122,3 +122,4 @@ coverage.xml
 dmypy.json
 .pytype/    
 cython_debug/
+

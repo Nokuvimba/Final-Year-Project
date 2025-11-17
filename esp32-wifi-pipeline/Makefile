@@ -1,5 +1,5 @@
 
-APP = main:app
+APP = FastAPI.main:app
 PORT = 8000
 
 # Install dependencies

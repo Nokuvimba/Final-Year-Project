@@ -1,3 +1,4 @@
+#serial_to_postgres.py
 """
 Reads Wi-Fi scan JSON data from the ESP32 over serial
 and inserts each record into a PostgreSQL database.

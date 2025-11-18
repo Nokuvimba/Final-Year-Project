@@ -24,3 +24,85 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ---------- Page Layout ---------- */
+.page {
+  min-height: 100vh;
+  background: #020617; /* very dark */
+  color: #f9fafb;
+  padding: 24px;
+  font-family: system-ui, sans-serif;
+}
+
+/* ---------- Section Titles ---------- */
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* ---------- Cards (Buildings & Rooms) ---------- */
+.card {
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #020617;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.card-subtext {
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.room-list {
+  list-style-type: disc;
+  padding-left: 18px;
+  color: #e5e7eb;
+}
+
+.room-item {
+  font-size: 0.8rem;
+  margin-bottom: 2px;
+}
+
+/* ---------- Recent Scans TABLE ---------- */
+.table-container {
+  margin-top: 12px;
+  max-width: 900px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+/* Make the table clearly look like a table */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #020617;
+}
+
+thead th {
+  background-color: #111827; /* dark header */
+  border-bottom: 2px solid #4b5563;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+th,
+td {
+  padding: 6px 8px;
+  border: 1px solid #4b5563; /* visible grid lines */
+  font-size: 0.8rem;
+}
+
+td.time {
+  white-space: nowrap;
+}

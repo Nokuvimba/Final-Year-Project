@@ -2,6 +2,7 @@
 from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, Body, HTTPException, Query, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import asynccontextmanager
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +22,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Wi-Fi Scan API", version="0.3.0", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():

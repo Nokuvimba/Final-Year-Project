@@ -1,5 +1,7 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
+
 
 class BuildingCreate(BaseModel):
     name: str
@@ -8,11 +10,10 @@ class BuildingCreate(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "name": "name of building",
-                "description": "add small description here"
+                "name": "Engineering Block",
+                "description": "Main labs and lecture rooms",
             }
         }
-    
 
 
 class RoomCreate(BaseModel):
@@ -24,9 +25,11 @@ class RoomCreate(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "name": "room name",
+                "name": "Lab 1.12",
                 "building_id": 1,
-                "floor": "floor name/number",
-                "room_type": "example laboratory"
+                "floor": "1st floor",
+                "room_type": "laboratory",
             }
         }
+    
+    

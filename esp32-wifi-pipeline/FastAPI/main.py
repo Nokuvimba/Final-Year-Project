@@ -4,18 +4,25 @@ from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, Body, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import asynccontextmanager
-from sqlalchemy.orm import Session
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from .schemas import BuildingCreate, RoomCreate
+from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .models import WifiScanDB, BuildingDB, RoomDB
+from .models import (
+    WifiScanDB,
+    BuildingDB,
+    RoomDB,
+    ScanSessionDB,
+    RoomScanDB,
+)
+from .schemas import BuildingCreate, RoomCreate
 
+NODE_TAG = "ESP32-LAB-01"
 
-#  creating tables on startup 
+# Lifespan – make sure tables exist
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-   
     Base.metadata.create_all(bind=engine)
     yield
 
@@ -33,26 +40,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Health + ingest
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/ingest")
+
+@app.post("/ingest", include_in_schema=False)
 def ingest(
     scans: List[Dict[str, Any]] = Body(...),
-    room_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """
-    Expect: [{node, ts, ssid, bssid, rssi, channel, enc}, ...]
-    Optional: room_id query param to tag all scans with a room.
+    Device-only endpoint.
+
+    1. Store raw Wi-Fi scans in wifi_scan.
+    2. If there is an active scan session, also create a row in room_scan
+       to link this scan to the current room/session.
     """
     if not isinstance(scans, list) or not scans:
-        raise HTTPException(status_code=400, detail="Payload must be a non-empty array")
+        raise HTTPException(
+            status_code=400,
+            detail="Payload must be a non-empty array",
+        )
 
     accepted = 0
 
+    # single-device setup → one active session max
+    active_session = (
+        db.query(ScanSessionDB)
+        .filter(ScanSessionDB.is_active.is_(True))
+        .order_by(ScanSessionDB.started_at.desc())
+        .first()
+    )
+
     for s in scans:
+        # 1. raw scan
         row = WifiScanDB(
             node=s.get("node"),
             device_ts_ms=s.get("ts"),
@@ -61,7 +86,7 @@ def ingest(
             rssi=s.get("rssi"),
             channel=s.get("channel"),
             enc=s.get("enc"),
-            room_id=room_id,
+            room_id=None,  # raw
         )
         db.add(row)
         try:
@@ -70,11 +95,88 @@ def ingest(
             accepted += 1
         except IntegrityError:
             db.rollback()
+            # skip room_scan if the raw scan failed
+            continue
 
-    return {"accepted": accepted, "total": len(scans), "room_id": room_id}
+        # 2. link to current room/session if there is one
+        if active_session:
+            link = RoomScanDB(
+                wifi_scan_id=row.id,
+                session_id=active_session.id,
+                room_id=active_session.room_id,
+            )
+            db.add(link)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
 
-@app.get("/wifi/recent")
-def recent(
+    return {"accepted": accepted, "total": len(scans)}
+
+
+# Scan sessions (start / stop for a room)
+
+@app.post("/rooms/{room_id}/start-scan")
+def start_scan_in_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # single-device setup → close any existing active sessions
+    db.query(ScanSessionDB).filter(
+        ScanSessionDB.is_active.is_(True)
+    ).update(
+        {"is_active": False, "ended_at": func.now()}
+    )
+
+    session = ScanSessionDB(node=NODE_TAG, room_id=room_id)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "message": "Scan session started",
+        "session_id": session.id,
+        "room_id": room_id,
+    }
+
+
+@app.post("/rooms/{room_id}/stop-scan")
+def stop_scan_in_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    session = (
+        db.query(ScanSessionDB)
+        .filter(
+            ScanSessionDB.room_id == room_id,
+            ScanSessionDB.is_active.is_(True),
+        )
+        .order_by(ScanSessionDB.started_at.desc())
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Active session not found")
+
+    session.is_active = False
+    session.ended_at = func.now()
+    db.commit()
+
+    return {
+        "message": "Scan session stopped",
+        "session_id": session.id,
+        "room_id": room_id,
+    }
+
+
+
+# Raw recent scans (global)
+
+@app.get("/wifi/rawScans")
+def rawScans(
     limit: int = Query(25, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
@@ -85,21 +187,32 @@ def recent(
         .all()
     )
 
-    return {"rows": [
-        {
-            "id": r.id,
-            "received_at": r.received_at,
-            "node": r.node,
-            "ssid": r.ssid,
-            "bssid": r.bssid,
-            "rssi": r.rssi,
-            "channel": r.channel,
-            "enc": r.enc,
-            "room_id": r.room_id,
-        }
-        for r in rows
-    ]}
+    result = []
+    for r in rows:
+        room = r.room  # may be None (older manually-tagged data)
+        building = room.building if room else None
 
+        result.append(
+            {
+                "id": r.id,
+                "received_at": r.received_at,
+                "node": r.node,
+                "ssid": r.ssid,
+                "bssid": r.bssid,
+                "rssi": r.rssi,
+                "channel": r.channel,
+                "enc": r.enc,
+                "room_id": r.room_id,
+                "room_name": room.name if room else None,
+                "building_id": building.id if building else None,
+                "building_name": building.name if building else None,
+            }
+        )
+
+    return {"rows": result}
+
+
+# Buildings
 
 @app.post("/buildings")
 def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
@@ -109,7 +222,6 @@ def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
 
     description = payload.description
 
-    # check for duplicate
     existing = db.query(BuildingDB).filter(BuildingDB.name == name).first()
     if existing:
         raise HTTPException(status_code=400, detail="Building name already exists")
@@ -119,24 +231,73 @@ def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(b)
 
-    return {"building": {
-        "id": b.id,
-        "name": b.name,
-        "description": b.description,
-    }}
+    return {
+        "building": {
+            "id": b.id,
+            "name": b.name,
+            "description": b.description,
+        }
+    }
 
 
 @app.get("/buildings")
 def list_buildings(db: Session = Depends(get_db)):
     rows = db.query(BuildingDB).order_by(BuildingDB.name).all()
-    return {"buildings": [
-        {"id": b.id, "name": b.name, "description": b.description}
-        for b in rows
-    ]}
+    return {
+        "buildings": [
+            {"id": b.id, "name": b.name, "description": b.description}
+            for b in rows
+        ]
+    }
 
 
+@app.get("/buildings/{building_id}/wifi")
+def recent_scans_for_building(
+    building_id: int,
+    limit: int = Query(500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
 
-# ROOMS 
+    # wifi_scan -> room_scan -> room, filter by building
+    rows = (
+        db.query(WifiScanDB, RoomDB)
+        .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
+        .join(RoomDB, RoomScanDB.room_id == RoomDB.id)
+        .filter(RoomDB.building_id == building_id)
+        .order_by(WifiScanDB.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "building": {
+            "id": building.id,
+            "name": building.name,
+            "description": building.description,
+        },
+        "rows": [
+            {
+                "id": scan.id,
+                "received_at": scan.received_at,
+                "node": scan.node,
+                "ssid": scan.ssid,
+                "bssid": scan.bssid,
+                "rssi": scan.rssi,
+                "channel": scan.channel,
+                "enc": scan.enc,
+                "room_id": room.id,
+                "room_name": room.name,
+            }
+            for (scan, room) in rows
+        ],
+    }
+
+
+# Rooms
+
 @app.post("/rooms")
 def create_room(payload: RoomCreate, db: Session = Depends(get_db)):
     name = payload.name
@@ -151,7 +312,6 @@ def create_room(payload: RoomCreate, db: Session = Depends(get_db)):
     floor = payload.floor
     room_type = payload.room_type
 
-    # check building exists
     building = db.query(BuildingDB).filter(BuildingDB.id == building_id).first()
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
@@ -166,13 +326,15 @@ def create_room(payload: RoomCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(r)
 
-    return {"room": {
-        "id": r.id,
-        "name": r.name,
-        "building_id": r.building_id,
-        "floor": r.floor,
-        "room_type": r.room_type,
-    }}
+    return {
+        "room": {
+            "id": r.id,
+            "name": r.name,
+            "building_id": r.building_id,
+            "floor": r.floor,
+            "room_type": r.room_type,
+        }
+    }
 
 
 @app.get("/rooms")
@@ -187,39 +349,41 @@ def list_rooms(
 
     rows = q.order_by(BuildingDB.name, RoomDB.name).all()
 
-    return {"rooms": [
-        {
-            "id": r.id,
-            "name": r.name,
-            "building_id": r.building_id,
-            "building_name": r.building.name,
-            "floor": r.floor,
-            "room_type": r.room_type,
-        }
-        for r in rows
-    ]}
-    
+    return {
+        "rooms": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "building_id": r.building_id,
+                "building_name": r.building.name,
+                "floor": r.floor,
+                "room_type": r.room_type,
+            }
+            for r in rows
+        ]
+    }
+
+
 @app.get("/rooms/{room_id}/wifi")
 def recent_scans_for_room(
     room_id: int,
     limit: int = Query(100, ge=1, le=2000),
     db: Session = Depends(get_db),
 ):
-    # making sure the room exists
     room = db.get(RoomDB, room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # fetching scans for this room
+    # use the physical mapping table room_scan
     rows = (
         db.query(WifiScanDB)
-        .filter(WifiScanDB.room_id == room_id)
+        .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
+        .filter(RoomScanDB.room_id == room_id)
         .order_by(WifiScanDB.id.desc())
         .limit(limit)
         .all()
     )
 
-    # return scans + some metadata about room/building
     return {
         "room": {
             "id": room.id,
@@ -239,51 +403,40 @@ def recent_scans_for_room(
                 "rssi": r.rssi,
                 "channel": r.channel,
                 "enc": r.enc,
-                "room_id": r.room_id,
+                "room_id": room_id,
             }
             for r in rows
         ],
     }
-    
-@app.get("/buildings/{building_id}/wifi")
-def recent_scans_for_building(
-    building_id: int,
-    limit: int = Query(500, ge=1, le=5000),
+
+
+# Sessions listing (admin)
+
+@app.get("/sessions")
+def list_sessions(
     db: Session = Depends(get_db),
 ):
-    # ensure the building exists
-    building = db.get(BuildingDB, building_id)
-    if not building:
-        raise HTTPException(status_code=404, detail="Building not found")
-
-    # join wifi_scan -> room and filter by building
-    rows = (
-        db.query(WifiScanDB)
-        .join(RoomDB, WifiScanDB.room_id == RoomDB.id)
-        .filter(RoomDB.building_id == building_id)
-        .order_by(WifiScanDB.id.desc())
-        .limit(limit)
+    sessions = (
+        db.query(ScanSessionDB)
+        .join(RoomDB, ScanSessionDB.room_id == RoomDB.id)
+        .join(BuildingDB, RoomDB.building_id == BuildingDB.id)
+        .order_by(ScanSessionDB.id.desc())
         .all()
     )
 
     return {
-        "building": {
-            "id": building.id,
-            "name": building.name,
-            "description": building.description,
-        },
-        "rows": [
+        "sessions": [
             {
-                "id": r.id,
-                "received_at": r.received_at,
-                "node": r.node,
-                "ssid": r.ssid,
-                "bssid": r.bssid,
-                "rssi": r.rssi,
-                "channel": r.channel,
-                "enc": r.enc,
-                "room_id": r.room_id,
+                "id": s.id,
+                "node": s.node,
+                "room_id": s.room_id,
+                "room_name": s.room.name,
+                "building_id": s.room.building_id,
+                "building_name": s.room.building.name,
+                "started_at": s.started_at,
+                "ended_at": s.ended_at,
+                "is_active": s.is_active,
             }
-            for r in rows
-        ],
+            for s in sessions
+        ]
     }

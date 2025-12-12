@@ -11,11 +11,11 @@ export default function HomePage() {
         </p>
 
         <div className="home-actions">
-          <Link href="/admin/buildings" className="button button-primary">
-            Go to Admin Mode
+          <Link href="/admin" className="button button-primary">
+            Admin Dashboard
           </Link>
           <Link href="/user" className="button button-secondary">
-            Go to User Mode
+            User Interface
           </Link>
         </div>
       </div>

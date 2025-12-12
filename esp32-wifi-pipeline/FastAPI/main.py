@@ -16,7 +16,7 @@ from .models import (
     ScanSessionDB,
     RoomScanDB,
 )
-from .schemas import BuildingCreate, RoomCreate
+from .schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate
 
 NODE_TAG = "ESP32-LAB-01"
 
@@ -251,6 +251,55 @@ def list_buildings(db: Session = Depends(get_db)):
     }
 
 
+@app.put("/buildings/{building_id}")
+def update_building(
+    building_id: int,
+    payload: BuildingUpdate,
+    db: Session = Depends(get_db),
+):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    if payload.name is not None:
+        existing = db.query(BuildingDB).filter(
+            BuildingDB.name == payload.name,
+            BuildingDB.id != building_id
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Building name already exists")
+        building.name = payload.name
+
+    if payload.description is not None:
+        building.description = payload.description
+
+    db.commit()
+    db.refresh(building)
+
+    return {
+        "building": {
+            "id": building.id,
+            "name": building.name,
+            "description": building.description,
+        }
+    }
+
+
+@app.delete("/buildings/{building_id}")
+def delete_building(
+    building_id: int,
+    db: Session = Depends(get_db),
+):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    db.delete(building)
+    db.commit()
+
+    return {"message": "Building deleted successfully"}
+
+
 @app.get("/buildings/{building_id}/wifi")
 def recent_scans_for_building(
     building_id: int,
@@ -362,6 +411,58 @@ def list_rooms(
             for r in rows
         ]
     }
+
+
+@app.put("/rooms/{room_id}")
+def update_room(
+    room_id: int,
+    payload: RoomUpdate,
+    db: Session = Depends(get_db),
+):
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    if payload.building_id is not None:
+        building = db.get(BuildingDB, payload.building_id)
+        if not building:
+            raise HTTPException(status_code=404, detail="Building not found")
+        room.building_id = payload.building_id
+
+    if payload.name is not None:
+        room.name = payload.name
+    if payload.floor is not None:
+        room.floor = payload.floor
+    if payload.room_type is not None:
+        room.room_type = payload.room_type
+
+    db.commit()
+    db.refresh(room)
+
+    return {
+        "room": {
+            "id": room.id,
+            "name": room.name,
+            "building_id": room.building_id,
+            "floor": room.floor,
+            "room_type": room.room_type,
+        }
+    }
+
+
+@app.delete("/rooms/{room_id}")
+def delete_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+):
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    db.delete(room)
+    db.commit()
+
+    return {"message": "Room deleted successfully"}
 
 
 @app.get("/rooms/{room_id}/wifi")

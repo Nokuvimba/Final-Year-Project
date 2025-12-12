@@ -22,7 +22,7 @@ function classifySignal(rssi: number | null): {
   // you can tweak these thresholds later
   if (rssi >= -50) return { label: "Strong", className: "badge badge-success" };
   if (rssi >= -70) return { label: "Medium", className: "badge badge-warning" };
-  return { label: "Weak", className: "badge badge-error" };
+  return { label: "Weak", className: "badge badge-danger" };
 }
 
 export default async function AdminRawWifiScansPage() {

@@ -100,6 +100,32 @@ export async function createBuilding(payload: {
   return data.building;
 }
 
+export async function updateBuilding(
+  buildingId: number,
+  payload: {
+    name?: string;
+    description?: string;
+  }
+): Promise<Building> {
+  const res = await fetch(`${API_BASE}/buildings/${buildingId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleJson<{ building: Building }>(res);
+  return data.building;
+}
+
+export async function deleteBuilding(buildingId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/buildings/${buildingId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Delete failed: ${res.status} ${text}`);
+  }
+}
+
 // ---------- Rooms ----------
 
 export async function fetchRooms(
@@ -131,6 +157,34 @@ export async function createRoom(payload: {
   });
   const data = await handleJson<{ room: Room }>(res);
   return data.room;
+}
+
+export async function updateRoom(
+  roomId: number,
+  payload: {
+    name?: string;
+    building_id?: number;
+    floor?: string;
+    room_type?: string;
+  }
+): Promise<Room> {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleJson<{ room: Room }>(res);
+  return data.room;
+}
+
+export async function deleteRoom(roomId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Delete failed: ${res.status} ${text}`);
+  }
 }
 
 // ---------- Raw recent scans ----------

@@ -2,7 +2,8 @@
 // app/admin/buildings/[buildingId]/rooms/page.tsx
 "use client";
 
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState, FormEvent, use } from "react";
+import Link from "next/link";
 import {
   fetchRooms,
   fetchBuildings,
@@ -10,6 +11,8 @@ import {
   startRoomScan,
   stopRoomScan,
   createRoom,
+  updateRoom,
+  deleteRoom,
   type Room,
 } from "@/lib/api";
 
@@ -20,7 +23,19 @@ type Props = {
 type RoomWithStatus = Room & { isActive: boolean };
 
 export default function AdminRoomsPage({ params }: Props) {
-  const buildingId = Number(params.buildingId);
+  const resolvedParams = use(params);
+  const buildingId = Number(resolvedParams.buildingId);
+  
+  if (isNaN(buildingId)) {
+    return (
+      <div className="page">
+        <div className="empty-state">
+          <h2>Invalid building ID</h2>
+          <p>The building ID in the URL is not valid.</p>
+        </div>
+      </div>
+    );
+  }
 
   const [buildingName, setBuildingName] = useState<string>("");
   const [buildingDescription, setBuildingDescription] = useState<string | null>(
@@ -33,6 +48,7 @@ export default function AdminRoomsPage({ params }: Props) {
 
   // modal state
   const [showAddRoom, setShowAddRoom] = useState(false);
+  const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomFloor, setNewRoomFloor] = useState("");
   const [newRoomType, setNewRoomType] = useState("");
@@ -49,7 +65,7 @@ export default function AdminRoomsPage({ params }: Props) {
         fetchRooms(buildingId),
         fetchScanSessions(),
       ]);
-
+      
       const thisBuilding = buildings.find((b) => b.id === buildingId);
       setBuildingName(thisBuilding?.name ?? "Unknown building");
       setBuildingDescription(thisBuilding?.description ?? null);
@@ -106,8 +122,8 @@ export default function AdminRoomsPage({ params }: Props) {
     }
   }
 
-  // -------- add room form submit --------
-  async function handleAddRoomSubmit(e: FormEvent) {
+  // -------- room form submit --------
+  async function handleRoomSubmit(e: FormEvent) {
     e.preventDefault();
 
     if (!newRoomName.trim()) {
@@ -119,26 +135,58 @@ export default function AdminRoomsPage({ params }: Props) {
       setSavingRoom(true);
       setError(null);
 
-      await createRoom({
-        name: newRoomName.trim(),
-        building_id: buildingId,
-        floor: newRoomFloor.trim() || undefined,
-        room_type: newRoomType.trim() || undefined,
-      });
+      if (editingRoom) {
+        await updateRoom(editingRoom.id, {
+          name: newRoomName.trim(),
+          floor: newRoomFloor.trim() || undefined,
+          room_type: newRoomType.trim() || undefined,
+        });
+      } else {
+        await createRoom({
+          name: newRoomName.trim(),
+          building_id: buildingId,
+          floor: newRoomFloor.trim() || undefined,
+          room_type: newRoomType.trim() || undefined,
+        });
+      }
 
       // clear + close modal
       setNewRoomName("");
       setNewRoomFloor("");
       setNewRoomType("");
       setShowAddRoom(false);
+      setEditingRoom(null);
 
       // refresh table
       await loadData();
     } catch (err) {
       console.error(err);
-      setError("Could not create room");
+      setError(editingRoom ? "Could not update room" : "Could not create room");
     } finally {
       setSavingRoom(false);
+    }
+  }
+
+  function handleEditRoom(room: RoomWithStatus) {
+    setEditingRoom(room);
+    setNewRoomName(room.name);
+    setNewRoomFloor(room.floor || "");
+    setNewRoomType(room.room_type || "");
+    setShowAddRoom(true);
+  }
+
+  async function handleDeleteRoom(roomId: number, roomName: string) {
+    if (!window.confirm(`Delete room "${roomName}"? This will also delete all scan data for this room.`)) {
+      return;
+    }
+
+    try {
+      setError(null);
+      await deleteRoom(roomId);
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      setError("Could not delete room");
     }
   }
 
@@ -162,7 +210,10 @@ export default function AdminRoomsPage({ params }: Props) {
         <button
           className="button button-primary"
           type="button"
-          onClick={() => setShowAddRoom(true)}
+          onClick={() => {
+            setError(null);
+            setShowAddRoom(true);
+          }}
         >
           + Add Room
         </button>
@@ -178,72 +229,81 @@ export default function AdminRoomsPage({ params }: Props) {
           <p>Use “Add Room” to create your first room.</p>
         </div>
       ) : (
-        <div className="table-card">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Room Name</th>
-                <th>Floor</th>
-                <th>Room Type</th>
-                <th>Scan Status</th>
-                <th style={{ textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rooms.map((room) => {
-                const busy = actionRoomId === room.id;
-                return (
-                  <tr key={room.id}>
-                    <td>{room.name}</td>
-                    <td>{room.floor ?? "—"}</td>
-                    <td>{room.room_type ?? "—"}</td>
-                    <td>
-                      <span
-                        className={
-                          room.isActive
-                            ? "badge badge-success"
-                            : "badge badge-muted"
-                        }
-                      >
-                        {room.isActive ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      {room.isActive ? (
-                        <button
-                          type="button"
-                          className="button button-secondary"
-                          onClick={() => void handleStop(room.id)}
-                          disabled={busy}
-                        >
-                          {busy ? "Stopping…" : "Stop Scan"}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="button button-success"
-                          onClick={() => void handleStart(room.id)}
-                          disabled={busy}
-                        >
-                          {busy ? "Starting…" : "Start Scan"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="rooms-grid">
+          <div className="rooms-header">
+            <div className="rooms-header-cell">Room Name</div>
+            <div className="rooms-header-cell">Floor</div>
+            <div className="rooms-header-cell">Room Type</div>
+            <div className="rooms-header-cell">Scan Status</div>
+            <div className="rooms-header-cell">Actions</div>
+          </div>
+          {rooms.map((room) => {
+            const busy = actionRoomId === room.id;
+            return (
+              <div key={room.id} className="room-row">
+                <div className="room-cell room-name-cell">
+                  <div className="room-icon">📚</div>
+                  <Link href={`/admin/rooms/${room.id}`} className="room-name-link">
+                    {room.name}
+                  </Link>
+                </div>
+                <div className="room-cell">{room.floor ?? "—"}</div>
+                <div className="room-cell">
+                  <span className="room-type-badge">{room.room_type ?? "—"}</span>
+                </div>
+                <div className="room-cell">
+                  <span className={room.isActive ? "status-active" : "status-inactive"}>
+                    {room.isActive ? "Active" : "Inactive"}
+                  </span>
+                </div>
+                <div className="room-cell room-actions">
+                  {room.isActive ? (
+                    <button
+                      type="button"
+                      className="button button-stop"
+                      onClick={() => void handleStop(room.id)}
+                      disabled={busy}
+                    >
+                      {busy ? "Stopping…" : "Stop Scan"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="button button-start"
+                      onClick={() => void handleStart(room.id)}
+                      disabled={busy}
+                    >
+                      {busy ? "Starting…" : "Start Scan"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="button button-edit"
+                    onClick={() => handleEditRoom(room)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-delete"
+                    onClick={() => void handleDeleteRoom(room.id, room.name)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* -------- Add Room Modal -------- */}
+      {/* -------- Add/Edit Room Modal -------- */}
       {showAddRoom && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h2 className="modal-title">Add New Room</h2>
+            <h2 className="modal-title">{editingRoom ? "Edit Room" : "Add New Room"}</h2>
 
-            <form onSubmit={handleAddRoomSubmit} className="modal-form">
+            <form onSubmit={handleRoomSubmit} className="modal-form">
               <div className="form-group">
                 <label className="form-label" htmlFor="room-name">
                   Room Name
@@ -287,7 +347,14 @@ export default function AdminRoomsPage({ params }: Props) {
                 <button
                   type="button"
                   className="button button-secondary"
-                  onClick={() => setShowAddRoom(false)}
+                  onClick={() => {
+                    setShowAddRoom(false);
+                    setEditingRoom(null);
+                    setNewRoomName("");
+                    setNewRoomFloor("");
+                    setNewRoomType("");
+                    setError(null);
+                  }}
                 >
                   Cancel
                 </button>
@@ -296,7 +363,7 @@ export default function AdminRoomsPage({ params }: Props) {
                   className="button button-primary"
                   disabled={savingRoom || !newRoomName.trim()}
                 >
-                  {savingRoom ? "Adding…" : "Add Room"}
+                  {savingRoom ? (editingRoom ? "Updating…" : "Adding…") : (editingRoom ? "Update Room" : "Add Room")}
                 </button>
               </div>
             </form>

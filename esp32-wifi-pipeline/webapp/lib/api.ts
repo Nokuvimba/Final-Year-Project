@@ -1,7 +1,10 @@
 // webapp/lib/api.ts
-//This file is talking to fastapi backend
+// Central place to talk to your FastAPI backend
+
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"; 
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+// ---------- Types ----------
 
 export type Building = {
   id: number;
@@ -28,37 +31,188 @@ export type WifiScan = {
   channel: number | null;
   enc: string | null;
   room_id: number | null;
+
+  room_name?: string | null;
+  building_id?: number | null;
+  building_name?: string | null;
 };
+
+export type ScanSession = {
+  id: number;
+  node: string;
+  room_id: number;
+  room_name: string;
+  building_id: number;
+  building_name: string;
+  started_at: string;
+  ended_at: string | null;
+  is_active: boolean;
+};
+
+// Rows returned by /rooms/{room_id}/wifi
+export type RoomWifiRow = {
+  id: number;
+  received_at: string;
+  node: string | null;
+  ssid: string | null;
+  bssid: string | null;
+  rssi: number | null;
+  channel: number | null;
+  enc: string | null;
+  room_id: number;
+};
+
+// Rows returned by /buildings/{building_id}/wifi
+export type BuildingWifiRow = RoomWifiRow & {
+  room_name: string;
+};
+
+// ---------- Helpers for dealing with HTTP errors ----------
+
+async function handleJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Request failed: ${res.status} ${res.statusText} ${text || ""}`.trim()
+    );
+  }
+  return res.json() as Promise<T>;
+}
+
+// ---------- Buildings ----------
 
 export async function fetchBuildings(): Promise<Building[]> {
   const res = await fetch(`${API_BASE}/buildings`, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to load buildings");
-  const data = await res.json();
+  const data = await handleJson<{ buildings: Building[] }>(res);
   return data.buildings ?? [];
 }
+
+export async function createBuilding(payload: {
+  name: string;
+  description?: string;
+}): Promise<Building> {
+  const res = await fetch(`${API_BASE}/buildings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleJson<{ building: Building }>(res);
+  return data.building;
+}
+
+// ---------- Rooms ----------
 
 export async function fetchRooms(
   buildingId?: number
 ): Promise<Room[]> {
+  const hasValidBuildingId =
+    typeof buildingId === "number" && Number.isFinite(buildingId);
+
   const url =
     buildingId != null
       ? `${API_BASE}/rooms?building_id=${buildingId}`
       : `${API_BASE}/rooms`;
 
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error("Failed to load rooms");
-  const data = await res.json();
+  const data = await handleJson<{ rooms: Room[] }>(res);
   return data.rooms ?? [];
 }
+
+export async function createRoom(payload: {
+  name: string;
+  building_id: number;
+  floor?: string;
+  room_type?: string;
+}): Promise<Room> {
+  const res = await fetch(`${API_BASE}/rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await handleJson<{ room: Room }>(res);
+  return data.room;
+}
+
+// ---------- Raw recent scans ----------
 
 export async function fetchRecentScans(
   limit = 25
 ): Promise<WifiScan[]> {
   const res = await fetch(
-    `${API_BASE}/wifi/recent?limit=${limit}`,
+    `${API_BASE}/wifi/rawScans?limit=${limit}`,
     { cache: "no-store" }
   );
-  if (!res.ok) throw new Error("Failed to load recent scans");
-  const data = await res.json();
+  const data = await handleJson<{ rows: WifiScan[] }>(res);
   return data.rows ?? [];
+}
+
+// ---------- Room / Building scans (session-based) ----------
+
+export async function fetchRoomScans(
+  roomId: number,
+  limit = 100
+): Promise<{
+  room: {
+    id: number;
+    name: string;
+    floor: string | null;
+    room_type: string | null;
+    building_id: number;
+    building_name: string;
+  };
+  rows: RoomWifiRow[];
+}> {
+  const res = await fetch(
+    `${API_BASE}/rooms/${roomId}/wifi?limit=${limit}`,
+    { cache: "no-store" }
+  );
+  return handleJson(res);
+}
+
+export async function fetchBuildingScans(
+  buildingId: number,
+  limit = 500
+): Promise<{
+  building: {
+    id: number;
+    name: string;
+    description: string | null;
+  };
+  rows: BuildingWifiRow[];
+}> {
+  const res = await fetch(
+    `${API_BASE}/buildings/${buildingId}/wifi?limit=${limit}`,
+    { cache: "no-store" }
+  );
+  return handleJson(res);
+}
+
+// ---------- Scan sessions ----------
+
+export async function fetchScanSessions(): Promise<ScanSession[]> {
+  const res = await fetch(`${API_BASE}/sessions`, { cache: "no-store" });
+  const data = await handleJson<{ sessions: ScanSession[] }>(res);
+  return data.sessions ?? [];
+}
+
+// POST /rooms/{room_id}/start-scan
+export async function startRoomScan(roomId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}/start-scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}), // backend uses fixed node
+  });
+
+  await handleJson(res);
+}
+
+// POST /rooms/{room_id}/stop-scan
+export async function stopRoomScan(roomId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}/stop-scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}), // backend uses fixed node
+  });
+
+  await handleJson(res);
 }

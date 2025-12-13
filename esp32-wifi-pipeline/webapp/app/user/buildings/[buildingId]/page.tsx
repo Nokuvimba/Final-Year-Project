@@ -3,7 +3,7 @@
 
 import { fetchRooms, fetchBuildings, fetchBuildingScans } from "@/lib/api";
 import Link from "next/link";
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, useCallback } from "react";
 
 type Props = {
   params: Promise<{ buildingId: string }>;
@@ -16,25 +16,65 @@ export default function UserBuildingPage({ params }: Props) {
   const [buildings, setBuildings] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
   const [scansData, setScansData] = useState<any>({ rows: [] });
+  const [roomColors, setRoomColors] = useState<Record<number, string>>({});
+  const [lastScanTimestamps, setLastScanTimestamps] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [buildingsData, roomsData, scansDataResult] = await Promise.all([
-          fetchBuildings(),
-          fetchRooms(buildingId),
-          fetchBuildingScans(buildingId, 50),
-        ]);
-        setBuildings(buildingsData);
-        setRooms(roomsData);
-        setScansData(scansDataResult);
-      } finally {
-        setLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    try {
+      const [buildingsData, roomsData, scansDataResult] = await Promise.all([
+        fetchBuildings(),
+        fetchRooms(buildingId),
+        fetchBuildingScans(buildingId),
+      ]);
+      setBuildings(buildingsData);
+      setRooms(roomsData);
+      setScansData(scansDataResult);
+      
+      // Update room colors for all rooms
+      setRoomColors(prev => {
+        const updatedColors = { ...prev };
+        
+        roomsData.forEach(room => {
+          const roomScans = scansDataResult.rows.filter(scan => scan.room_name === room.name);
+          
+          if (roomScans.length > 0) {
+            const strongScans = roomScans.filter(scan => scan.rssi >= -50).length;
+            const mediumScans = roomScans.filter(scan => scan.rssi >= -70 && scan.rssi < -50).length;
+            const weakScans = roomScans.filter(scan => scan.rssi < -70).length;
+            
+            let gradientId = 'noSignal';
+            if (weakScans === roomScans.length || (strongScans + mediumScans === 1)) {
+              gradientId = 'weakSignal';
+            } else if (strongScans > mediumScans) {
+              gradientId = 'strongSignal';
+            } else if (mediumScans > strongScans) {
+              gradientId = 'mediumSignal';
+            } else {
+              gradientId = 'weakSignal';
+            }
+            
+            updatedColors[room.id] = gradientId;
+          } else if (!updatedColors[room.id]) {
+            updatedColors[room.id] = 'noSignal';
+          }
+        });
+        
+        return updatedColors;
+      });
+      
+    } finally {
+      setLoading(false);
     }
-    loadData();
   }, [buildingId]);
+
+  useEffect(() => {
+    loadData();
+    
+    // Auto-refresh every 5 seconds to update room colors
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, [loadData]);
   
   if (loading) return <div className="page">Loading...</div>;
 
@@ -104,6 +144,10 @@ export default function UserBuildingPage({ params }: Props) {
                 <stop offset="0%" stopColor="#ef4444" stopOpacity="0.8"/>
                 <stop offset="100%" stopColor="#ef4444" stopOpacity="0.2"/>
               </radialGradient>
+              <radialGradient id="noSignal" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#e5e7eb" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#e5e7eb" stopOpacity="0.1"/>
+              </radialGradient>
             </defs>
             
             {/* Room outlines */}
@@ -113,11 +157,9 @@ export default function UserBuildingPage({ params }: Props) {
               
               // Get actual scans for this room
               const roomScans = scansData.rows.filter(scan => scan.room_name === room.name);
-              const avgSignal = roomScans.length > 0 
-                ? roomScans.reduce((sum, scan) => sum + (scan.rssi || 0), 0) / roomScans.length
-                : -75; // Default weak signal if no scans
               
-              const gradientId = avgSignal >= -50 ? 'strongSignal' : avgSignal >= -70 ? 'mediumSignal' : 'weakSignal';
+              // Use stored room color, fallback to noSignal if not set
+              const gradientId = roomColors[room.id] || 'noSignal';
               
               return (
                 <g key={room.id}>
@@ -133,13 +175,15 @@ export default function UserBuildingPage({ params }: Props) {
                     rx="8"
                   />
                   
-                  {/* Signal strength overlay */}
-                  <circle 
-                    cx={x + 75} 
-                    cy={y + 50} 
-                    r="60" 
-                    fill={`url(#${gradientId})`}
-                  />
+                  {/* Signal strength overlay - only show if there are scans */}
+                  {roomScans.length > 0 && (
+                    <circle 
+                      cx={x + 75} 
+                      cy={y + 50} 
+                      r="60" 
+                      fill={`url(#${gradientId})`}
+                    />
+                  )}
                   
                   {/* Access point indicator */}
                   <circle 
@@ -169,7 +213,7 @@ export default function UserBuildingPage({ params }: Props) {
                     fontSize="10" 
                     fill="#6b7280"
                   >
-                    {Math.round(avgSignal)} dBm
+                    {roomScans.length > 0 ? `${roomScans.length} scans` : 'No scans'}
                   </text>
                   
                   {/* Clickable overlay */}

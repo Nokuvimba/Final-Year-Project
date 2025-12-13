@@ -108,7 +108,18 @@ export default function AdminBuildingsPage() {
       ) : (
         <div className="cards-grid">
           {buildings.map((b) => (
-            <BuildingCard key={b.id} building={b} />
+            <BuildingCard 
+              key={b.id} 
+              building={b} 
+              onUpdate={(updated) => {
+                setBuildings(prev => prev.map(building => 
+                  building.id === updated.id ? updated : building
+                ));
+              }}
+              onDelete={(buildingId) => {
+                setBuildings(prev => prev.filter(building => building.id !== buildingId));
+              }}
+            />
           ))}
         </div>
       )}

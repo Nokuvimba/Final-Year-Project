@@ -36,6 +36,16 @@ export function BuildingsPageClient({ initialBuildings }: Props) {
     }
   }
 
+  function handleUpdateBuilding(updatedBuilding: Building) {
+    setBuildings((prev) =>
+      prev.map((b) => (b.id === updatedBuilding.id ? updatedBuilding : b))
+    );
+  }
+
+  function handleDeleteBuilding(buildingId: number) {
+    setBuildings((prev) => prev.filter((b) => b.id !== buildingId));
+  }
+
   return (
     <div className="page">
       <header className="page-header">
@@ -66,7 +76,12 @@ export function BuildingsPageClient({ initialBuildings }: Props) {
       ) : (
         <div className="cards-grid">
           {buildings.map((b) => (
-            <BuildingCard key={b.id} building={b} />
+            <BuildingCard 
+              key={b.id} 
+              building={b} 
+              onUpdate={handleUpdateBuilding}
+              onDelete={handleDeleteBuilding}
+            />
           ))}
         </div>
       )}

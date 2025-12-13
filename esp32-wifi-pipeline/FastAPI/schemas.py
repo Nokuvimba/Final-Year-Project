@@ -16,6 +16,11 @@ class BuildingCreate(BaseModel):
         }
 
 
+class BuildingUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 class RoomCreate(BaseModel):
     name: str
     building_id: int
@@ -31,5 +36,12 @@ class RoomCreate(BaseModel):
                 "room_type": "laboratory",
             }
         }
+
+
+class RoomUpdate(BaseModel):
+    name: Optional[str] = None
+    building_id: Optional[int] = None
+    floor: Optional[str] = None
+    room_type: Optional[str] = None
     
     

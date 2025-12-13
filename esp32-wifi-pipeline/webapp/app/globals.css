@@ -176,8 +176,16 @@ td.time {
   font-size: 14px;
   text-decoration: none;
   color: #e5f0ff;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-nav-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
 }
 
 .sidebar-nav-item:hover {
@@ -194,11 +202,13 @@ td.time {
 }
 
 .sidebar-switch-button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
   padding: 10px 12px;
   border-radius: 999px;
-  text-align: center;
   background: rgba(15, 23, 42, 0.16);
   color: #f9fafb;
   text-decoration: none;
@@ -243,19 +253,32 @@ td.time {
   background: #ffffff;
   border-radius: 16px;
   padding: 20px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 16px;
-  align-items: center;
+  position: relative;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-  text-decoration: none;
-  color: inherit;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
 
 .building-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.building-card-link {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 16px;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+
+.building-card-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
 }
 
 .building-card-icon {
@@ -318,6 +341,29 @@ td.time {
 
 .button-secondary:hover {
   background: #d1d5db;
+}
+
+.button-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.button-danger {
+  background: #ef4444;
+  color: white;
+}
+
+.button-danger:hover {
+  background: #dc2626;
+}
+
+.button-success {
+  background: #10b981;
+  color: white;
+}
+
+.button-success:hover {
+  background: #059669;
 }
 
 /* === Empty state === */
@@ -499,11 +545,476 @@ td.time {
   box-shadow: 0 0 0 1px #2563eb22;
 }
 
-.modal-actions {
+.modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
   margin-top: 8px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-back {
+  display: inline-flex;
+  align-items: center;
+  color: #6b7280;
+  text-decoration: none;
+  font-size: 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.link-back:hover {
+  color: #374151;
+}
+
+.alert {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.alert-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* Rooms grid layout */
+.rooms-grid {
+  background: #ffffff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.rooms-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 600;
+  font-size: 14px;
+  color: #475569;
+}
+
+.rooms-header-cell {
+  padding: 16px 20px;
+}
+
+.room-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr;
+  border-bottom: 1px solid #f1f5f9;
+  align-items: center;
+  transition: background-color 0.15s ease;
+}
+
+.room-row:hover {
+  background: #f8fafc;
+}
+
+.room-cell {
+  padding: 16px 20px;
+  font-size: 14px;
+  color: #374151;
+}
+
+.room-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.room-icon {
+  width: 32px;
+  height: 32px;
+  background: #8b5cf6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.room-type-badge {
+  background: #dbeafe;
+  color: #1e40af;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-active {
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.status-inactive {
+  color: #64748b;
+}
+
+.room-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.button-start {
+  background: #16a34a;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.button-stop {
+  background: #dc2626;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.button-edit {
+  background: #f3f4f6;
+  color: #374151;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.button-delete {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+/* Room cards for user interface */
+.room-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.room-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+}
+
+.room-card-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.room-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #0f172a;
+}
+
+.room-card-details {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+}
+
+.room-card-chevron {
+  font-size: 20px;
+  color: #9ca3af;
+}
+
+/* Heatmap visualization */
+.heatmap-container {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.heatmap-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #0f172a;
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.heatmap-cell {
+  border-radius: 12px;
+  padding: 16px;
+  color: white;
+  animation: fadeInUp 0.5s ease forwards;
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.heatmap-cell-content {
+  text-align: center;
+}
+
+.heatmap-ssid {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.heatmap-rssi {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.heatmap-label {
+  font-size: 11px;
+  opacity: 0.9;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.signal-badge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Room header styling */
+.room-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.room-header-icon {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+}
+
+.generated-label {
+  font-size: 14px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+/* Enhanced metric cards */
+.metric-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+}
+
+.metric-icon {
+  font-size: 24px;
+  opacity: 0.9;
+}
+
+.metric-content {
+  flex: 1;
+}
+
+.metric-card-value {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.metric-card-title {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* Enhanced heatmap cells */
+.heatmap-icon {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.heatmap-scans {
+  font-size: 10px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+/* Detailed scans section */
+.detailed-scans {
+  margin-top: 32px;
+}
+
+.detailed-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #3b82f6;
+  margin-bottom: 16px;
+}
+
+/* Signal strength bar */
+.signal-bar {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+/* Signal strength guide */
+.signal-guide {
+  background: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 24px;
+  font-size: 14px;
+  color: #0369a1;
+}
+
+/* Room name link styling */
+.room-name-link {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.room-name-link:hover {
+  text-decoration: underline;
+}
+
+/* SVG Floor plan heatmap */
+.heatmap-container {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.heatmap-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #0f172a;
+}
+
+.floor-plan {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 1px solid #e2e8f0;
+}
+
+.floor-svg {
+  width: 100%;
+  height: auto;
+  max-height: 500px;
+}
+
+/* Heatmap legend */
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.heatmap-legend h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 8px 0;
+}
+
+.legend-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.legend-guide {
+  font-size: 13px;
+  color: #0369a1;
+  background: #f0f9ff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #e0f2fe;
+}
+
+.legend-gradient {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gradient-bar {
+  width: 200px;
+  height: 12px;
+  background: linear-gradient(to right, #ef4444, #f59e0b, #10b981);
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+}
+
+.gradient-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #6b7280;
+  padding: 0 4px;
+}
+
+.signal-strength-guide {
+  background: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 16px;
+  font-size: 14px;
+  color: #0369a1;
 }
 
 
@@ -511,4 +1022,53 @@ td.time {
 .input::placeholder {
   color: #9ca3af;
   opacity: 1;                /* make sure it shows up */
+}
+
+/* Strong Networks Section */
+.strong-networks-section {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.networks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.network-card {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-radius: 12px;
+  padding: 20px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  animation: fadeInUp 0.5s ease forwards;
+  opacity: 0;
+  transform: translateY(20px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+.network-icon {
+  font-size: 24px;
+  opacity: 0.9;
+}
+
+.network-info {
+  flex: 1;
+}
+
+.network-ssid {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.network-strength {
+  font-size: 14px;
+  opacity: 0.9;
 }

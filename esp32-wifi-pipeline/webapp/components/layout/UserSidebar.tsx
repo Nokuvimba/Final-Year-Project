@@ -1,10 +1,8 @@
-// components/layout/AdminSidebar.tsx
+// components/layout/UserSidebar.tsx
 "use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-
 
 interface NavItem {
   label: string;
@@ -13,13 +11,10 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: "Dashboard", href: "/admin", icon: "📊" },
-  { label: "Buildings", href: "/admin/buildings", icon: "🏢" },
-  { label: "Scan Sessions", href: "/admin/sessions", icon: "📡" },
-  { label: "Raw Wi-Fi Scans", href: "/admin/raw-wifi-scans", icon: "📶" },
+  { label: "Buildings", href: "/user", icon: "🏢" },
 ];
 
-export function AdminSidebar() {
+export function UserSidebar() {
   const pathname = usePathname();
 
   return (
@@ -34,9 +29,7 @@ export function AdminSidebar() {
 
       <nav className="sidebar-nav">
         {navItems.map((item) => {
-          const isActive = item.href === "/admin" 
-            ? pathname === "/admin" 
-            : pathname.startsWith(item.href);
+          const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
@@ -53,9 +46,9 @@ export function AdminSidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <Link href="/user" className="sidebar-switch-button">
+        <Link href="/admin" className="sidebar-switch-button">
           <span className="sidebar-nav-icon">👤</span>
-          <span>Switch to User Mode</span>
+          <span>Switch to Admin Mode</span>
         </Link>
       </div>
     </aside>

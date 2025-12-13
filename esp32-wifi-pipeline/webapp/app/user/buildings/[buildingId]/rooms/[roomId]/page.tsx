@@ -133,7 +133,7 @@ export default async function UserRoomHeatmapPage({ params }: Props) {
             </tr>
           </thead>
           <tbody>
-            {roomData.rows.slice(0, 20).map(scan => (
+            {roomData.rows.map(scan => (
               <tr key={scan.id}>
                 <td>{scan.ssid || "Hidden Network"}</td>
                 <td style={{ fontFamily: "monospace", fontSize: "12px" }}>

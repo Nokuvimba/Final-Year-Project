@@ -34,6 +34,10 @@ export default function UserBuildingPage({ params }: Props) {
       }
     }
     loadData();
+    
+    // Auto-refresh every 5 seconds to update room colors
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
   }, [buildingId]);
   
   if (loading) return <div className="page">Loading...</div>;
@@ -104,6 +108,10 @@ export default function UserBuildingPage({ params }: Props) {
                 <stop offset="0%" stopColor="#ef4444" stopOpacity="0.8"/>
                 <stop offset="100%" stopColor="#ef4444" stopOpacity="0.2"/>
               </radialGradient>
+              <radialGradient id="noSignal" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#e5e7eb" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#e5e7eb" stopOpacity="0.1"/>
+              </radialGradient>
             </defs>
             
             {/* Room outlines */}
@@ -113,11 +121,25 @@ export default function UserBuildingPage({ params }: Props) {
               
               // Get actual scans for this room
               const roomScans = scansData.rows.filter(scan => scan.room_name === room.name);
-              const avgSignal = roomScans.length > 0 
-                ? roomScans.reduce((sum, scan) => sum + (scan.rssi || 0), 0) / roomScans.length
-                : -75; // Default weak signal if no scans
               
-              const gradientId = avgSignal >= -50 ? 'strongSignal' : avgSignal >= -70 ? 'mediumSignal' : 'weakSignal';
+              // Determine room color based on scan distribution
+              let gradientId = 'noSignal'; // Default for no scans
+              
+              if (roomScans.length > 0) {
+                const strongScans = roomScans.filter(scan => scan.rssi >= -50).length;
+                const mediumScans = roomScans.filter(scan => scan.rssi >= -70 && scan.rssi < -50).length;
+                const weakScans = roomScans.filter(scan => scan.rssi < -70).length;
+                
+                if (weakScans === roomScans.length || (strongScans + mediumScans === 1)) {
+                  gradientId = 'weakSignal'; // Red: only weak scans OR only one medium/strong scan
+                } else if (strongScans > mediumScans) {
+                  gradientId = 'strongSignal'; // Green: more strong than medium
+                } else if (mediumScans > strongScans) {
+                  gradientId = 'mediumSignal'; // Yellow: more medium than strong
+                } else {
+                  gradientId = 'weakSignal'; // Red: equal or other cases
+                }
+              }
               
               return (
                 <g key={room.id}>
@@ -133,13 +155,15 @@ export default function UserBuildingPage({ params }: Props) {
                     rx="8"
                   />
                   
-                  {/* Signal strength overlay */}
-                  <circle 
-                    cx={x + 75} 
-                    cy={y + 50} 
-                    r="60" 
-                    fill={`url(#${gradientId})`}
-                  />
+                  {/* Signal strength overlay - only show if there are scans */}
+                  {roomScans.length > 0 && (
+                    <circle 
+                      cx={x + 75} 
+                      cy={y + 50} 
+                      r="60" 
+                      fill={`url(#${gradientId})`}
+                    />
+                  )}
                   
                   {/* Access point indicator */}
                   <circle 
@@ -169,7 +193,7 @@ export default function UserBuildingPage({ params }: Props) {
                     fontSize="10" 
                     fill="#6b7280"
                   >
-                    {Math.round(avgSignal)} dBm
+                    {roomScans.length > 0 ? `${roomScans.length} scans` : 'No scans'}
                   </text>
                   
                   {/* Clickable overlay */}

@@ -47,10 +47,11 @@ export default async function UserRoomHeatmapPage({ params }: Props) {
     );
   }
 
-  const uniqueNetworks = Array.from(
+  // Filter for strong WiFi networks only (RSSI >= -50 dBm)
+  const strongNetworks = Array.from(
     new Map(
       roomData.rows
-        .filter(scan => scan.ssid)
+        .filter(scan => scan.ssid && scan.rssi && scan.rssi >= -50)
         .map(scan => [scan.ssid, scan])
     ).values()
   );
@@ -76,8 +77,8 @@ export default async function UserRoomHeatmapPage({ params }: Props) {
         </div>
 
         <div className="metric-card metric-card-green">
-          <div className="metric-card-title">Unique Networks</div>
-          <div className="metric-card-value">{uniqueNetworks.length}</div>
+          <div className="metric-card-title">Strong Networks</div>
+          <div className="metric-card-value">{strongNetworks.length}</div>
         </div>
 
         <div className="metric-card metric-card-purple">
@@ -90,31 +91,35 @@ export default async function UserRoomHeatmapPage({ params }: Props) {
         </div>
       </section>
 
-      <div className="heatmap-container">
-        <h3 className="heatmap-title">Network Signal Strength</h3>
-        <div className="heatmap-grid">
-          {uniqueNetworks.map((scan, index) => (
-            <div 
-              key={scan.id} 
-              className="heatmap-cell"
-              style={{ 
-                backgroundColor: getSignalColor(scan.rssi),
-                animationDelay: `${index * 0.1}s`
-              }}
-            >
-              <div className="heatmap-cell-content">
-                <div className="heatmap-ssid">{scan.ssid}</div>
-                <div className="heatmap-rssi">{scan.rssi}dBm</div>
-                <div className="heatmap-label">{getSignalLabel(scan.rssi)}</div>
+      <section className="strong-networks-section">
+        <h3 className="section-title" style={{ color: "#0f172a" }}>Strong Wi-Fi Networks Available</h3>
+        {strongNetworks.length === 0 ? (
+          <div className="empty-state">
+            <p>No strong Wi-Fi networks detected in this room.</p>
+            <small>Strong networks have signal strength of -50 dBm or better.</small>
+          </div>
+        ) : (
+          <div className="networks-grid">
+            {strongNetworks.map((scan, index) => (
+              <div 
+                key={scan.id} 
+                className="network-card"
+                style={{ animationDelay: `${index * 0.1}s` }}
+              >
+                <div className="network-icon">📶</div>
+                <div className="network-info">
+                  <div className="network-ssid">{scan.ssid}</div>
+                  <div className="network-strength">{scan.rssi} dBm • Strong Signal</div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="table-card">
         <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>
-          Recent Wi-Fi Scans
+          All Wi-Fi Networks
         </h3>
         <table className="table">
           <thead>

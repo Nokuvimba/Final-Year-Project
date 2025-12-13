@@ -1023,3 +1023,52 @@ td.time {
   color: #9ca3af;
   opacity: 1;                /* make sure it shows up */
 }
+
+/* Strong Networks Section */
+.strong-networks-section {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.networks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.network-card {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-radius: 12px;
+  padding: 20px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  animation: fadeInUp 0.5s ease forwards;
+  opacity: 0;
+  transform: translateY(20px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+.network-icon {
+  font-size: 24px;
+  opacity: 0.9;
+}
+
+.network-info {
+  flex: 1;
+}
+
+.network-ssid {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.network-strength {
+  font-size: 14px;
+  opacity: 0.9;
+}

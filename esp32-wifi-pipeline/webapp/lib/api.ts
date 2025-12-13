@@ -67,6 +67,19 @@ export type BuildingWifiRow = RoomWifiRow & {
   room_name: string;
 };
 
+// Return type for fetchRoomScans
+export type RoomScanData = {
+  room: {
+    id: number;
+    name: string;
+    floor: string | null;
+    room_type: string | null;
+    building_id: number;
+    building_name: string;
+  };
+  rows: RoomWifiRow[];
+};
+
 // ---------- Helpers for dealing with HTTP errors ----------
 
 async function handleJson<T>(res: Response): Promise<T> {
@@ -205,17 +218,7 @@ export async function fetchRecentScans(
 export async function fetchRoomScans(
   roomId: number,
   limit = 100
-): Promise<{
-  room: {
-    id: number;
-    name: string;
-    floor: string | null;
-    room_type: string | null;
-    building_id: number;
-    building_name: string;
-  };
-  rows: RoomWifiRow[];
-}> {
+): Promise<RoomScanData> {
   const res = await fetch(
     `${API_BASE}/rooms/${roomId}/wifi?limit=${limit}`,
     { cache: "no-store" }

@@ -11,8 +11,7 @@
 const char* WIFI_SSID     =  "Talie"; //"ATU-Galway-Guest-Aruba";//"Talie";  //"Three_7F2C30";
 const char* WIFI_PASSWORD =   "N7talie123";// "225299";//"N7talie123"; //"5sQuXs2zv22y2z5";
 
-// Your FastAPI endpoint using your laptop’s LAN IP
-// Example: http://192.168.1.23:8000/ingest
+// My FastAPI endpoint using the laptop’s LAN IP
 //const char* INGEST_URL    = "http://192.168.0.6:8000/ingest";
 const char* INGEST_URL = "http://172.20.10.5:8000/ingest";
 
@@ -20,7 +19,6 @@ const char* INGEST_URL = "http://172.20.10.5:8000/ingest";
 // Tag to identify which ESP32 sent the scan
 const char* NODE_TAG      = "ESP32-LAB-01";
 
-// ===========================================================
 // FUNCTION DECLARATIONS
 // ===========================================================
 void connectWiFi();
@@ -28,9 +26,9 @@ void startWiFiScan();
 void postScannedNetworks(int16_t networksFound);
 int  httpPostPayload(const String& payload);
 
+// CONNECT TO WIFI 
 // ===========================================================
-// CONNECT TO WIFI (safe version — avoids config errors)
-// ===========================================================
+
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;  // already connected
 

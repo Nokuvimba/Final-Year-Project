@@ -26,7 +26,6 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
 
-
 app = FastAPI(title="Wi-Fi Scan API", version="0.3.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -40,9 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # Health + ingest
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -53,13 +50,9 @@ def ingest(
     scans: List[Dict[str, Any]] = Body(...),
     db: Session = Depends(get_db),
 ):
-    """
-    Device-only endpoint.
-
-    1. Store raw Wi-Fi scans in wifi_scan.
-    2. If there is an active scan session, also create a row in room_scan
-       to link this scan to the current room/session.
-    """
+   #  1. Store raw Wi-Fi scans in wifi_scan.
+   # 2. If there is an active scan session, also create a row in room_scan to link this scan to the current room/session. 
+         
     if not isinstance(scans, list) or not scans:
         raise HTTPException(
             status_code=400,

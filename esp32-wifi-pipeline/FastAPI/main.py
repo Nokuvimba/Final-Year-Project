@@ -8,15 +8,15 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .database import Base, engine, get_db
-from .models import (
+from database import Base, engine, get_db
+from models import (
     WifiScanDB,
     BuildingDB,
     RoomDB,
     ScanSessionDB,
     RoomScanDB,
 )
-from .schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate
+from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate
 
 NODE_TAG = "ESP32-LAB-01"
 

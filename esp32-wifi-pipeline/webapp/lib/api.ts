@@ -1,9 +1,16 @@
 // webapp/lib/api.ts
 // Central place to talk to your FastAPI backend
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+//const API_BASE =
+  //process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+const isServer = typeof window === "undefined";
+
+// Browser -> must use relative proxy (/api)
+// Server   -> must use absolute URL 
+const API_BASE = isServer
+  ? `${process.env.NEXT_PUBLIC_SITE_URL}/api`
+  : "/api";
 // ---------- Types ----------
 
 export type Building = {

@@ -7,6 +7,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
+    Float,
 )
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -26,6 +27,12 @@ class BuildingDB(Base):
         back_populates="building",
         cascade="all, delete-orphan",
     )
+    
+    floorplans = relationship(
+        "FloorPlanDB",
+        back_populates="building",
+        cascade="all, delete-orphan",
+    )
 
 
 class RoomDB(Base):
@@ -35,14 +42,23 @@ class RoomDB(Base):
     name = Column(Text, nullable=False)
     floor = Column(Text, nullable=True)
     room_type = Column(Text, nullable=True)
+    x = Column(Float, nullable=True)
+    y = Column(Float, nullable=True)
 
     building_id = Column(
         Integer,
         ForeignKey("building.id", ondelete="CASCADE"),
         nullable=False,
     )
+    
+    floorplan_id = Column(
+        Integer,
+        ForeignKey("floor_plan.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     building = relationship("BuildingDB", back_populates="rooms")
+    floorplan = relationship("FloorPlanDB", back_populates="rooms")
 
     # raw scans that might have room_id set (we’re not really using this now,
     # but keep it for backwards compatibility)
@@ -165,3 +181,28 @@ class RoomScanDB(Base):
     wifi_scan = relationship("WifiScanDB", back_populates="room_scans")
     session = relationship("ScanSessionDB", back_populates="room_scans")
     room = relationship("RoomDB", back_populates="room_scans")
+
+
+class FloorPlanDB(Base):
+    __tablename__ = "floor_plan"
+
+    id = Column(Integer, primary_key=True, index=True)
+    building_id = Column(
+        Integer,
+        ForeignKey("building.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    floor_name = Column(Text, nullable=False)
+    image_url = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    building = relationship("BuildingDB", back_populates="floorplans")
+    rooms = relationship(
+        "RoomDB",
+        back_populates="floorplan",
+        cascade="all, delete-orphan",
+    )

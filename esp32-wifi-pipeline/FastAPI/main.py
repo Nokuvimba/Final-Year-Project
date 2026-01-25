@@ -1,9 +1,10 @@
 # main.py
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, Body, HTTPException, Query, Depends
+from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import asynccontextmanager
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -15,8 +16,11 @@ from models import (
     RoomDB,
     ScanSessionDB,
     RoomScanDB,
+    FloorPlanDB,
 )
 from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate
+import os
+import uuid
 
 NODE_TAG = "ESP32-LAB-01"
 
@@ -27,6 +31,12 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Wi-Fi Scan API", version="0.3.0", lifespan=lifespan)
+
+# Create uploads directory
+os.makedirs("uploads/floorplans", exist_ok=True)
+
+# Serve uploaded images
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -240,6 +250,45 @@ def list_buildings(db: Session = Depends(get_db)):
         "buildings": [
             {"id": b.id, "name": b.name, "description": b.description}
             for b in rows
+        ]
+    }
+
+
+@app.get("/buildings/{building_id}")
+def get_building(
+    building_id: int,
+    db: Session = Depends(get_db),
+):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+    
+    return {
+        "building": {
+            "id": building.id,
+            "name": building.name,
+            "description": building.description,
+        },
+        "rooms": [
+            {
+                "id": room.id,
+                "name": room.name,
+                "floor": room.floor,
+                "room_type": room.room_type,
+                "x": room.x,
+                "y": room.y,
+                "floorplan_id": room.floorplan_id,
+            }
+            for room in building.rooms
+        ],
+        "floorplans": [
+            {
+                "id": fp.id,
+                "floor_name": fp.floor_name,
+                "image_url": fp.image_url,
+                "created_at": fp.created_at,
+            }
+            for fp in building.floorplans
         ]
     }
 
@@ -533,4 +582,133 @@ def list_sessions(
             }
             for s in sessions
         ]
+    }
+
+
+# Floor Plans
+
+@app.post("/floorplans")
+def create_floorplan(
+    building_id: int = Form(...),
+    floor_name: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    # Validate building exists
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith(("image/png", "image/jpeg")):
+        raise HTTPException(status_code=400, detail="File must be PNG or JPEG")
+    
+    # Check for existing floor plan
+    existing = db.query(FloorPlanDB).filter(
+        FloorPlanDB.building_id == building_id,
+        FloorPlanDB.floor_name == floor_name
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
+    
+    # Save file
+    file_ext = ".png" if file.content_type == "image/png" else ".jpg"
+    filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = f"uploads/floorplans/{filename}"
+    
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
+    
+    # Create floor plan record
+    floorplan = FloorPlanDB(
+        building_id=building_id,
+        floor_name=floor_name,
+        image_url=f"/uploads/floorplans/{filename}"
+    )
+    db.add(floorplan)
+    db.commit()
+    db.refresh(floorplan)
+    
+    return {
+        "floorplan": {
+            "id": floorplan.id,
+            "building_id": floorplan.building_id,
+            "floor_name": floorplan.floor_name,
+            "image_url": floorplan.image_url,
+            "created_at": floorplan.created_at,
+        }
+    }
+
+
+@app.get("/buildings/{building_id}/floorplans")
+def get_building_floorplans(
+    building_id: int,
+    db: Session = Depends(get_db),
+):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+    
+    floorplans = db.query(FloorPlanDB).filter(
+        FloorPlanDB.building_id == building_id
+    ).order_by(FloorPlanDB.floor_name).all()
+    
+    return {
+        "building": {
+            "id": building.id,
+            "name": building.name,
+        },
+        "floorplans": [
+            {
+                "id": fp.id,
+                "floor_name": fp.floor_name,
+                "image_url": fp.image_url,
+                "created_at": fp.created_at,
+            }
+            for fp in floorplans
+        ]
+    }
+
+
+@app.put("/rooms/{room_id}/position")
+def update_room_position(
+    room_id: int,
+    floorplan_id: int = Body(...),
+    x: float = Body(...),
+    y: float = Body(...),
+    db: Session = Depends(get_db),
+):
+    # Validate room exists
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    # Validate floorplan exists
+    floorplan = db.get(FloorPlanDB, floorplan_id)
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Validate floorplan belongs to same building as room
+    if floorplan.building_id != room.building_id:
+        raise HTTPException(status_code=400, detail="Floor plan must belong to the same building as the room")
+    
+    # Validate coordinates are between 0 and 1
+    if not (0 <= x <= 1) or not (0 <= y <= 1):
+        raise HTTPException(status_code=400, detail="Coordinates must be between 0 and 1")
+    
+    # Update room position
+    room.floorplan_id = floorplan_id
+    room.x = x
+    room.y = y
+    db.commit()
+    db.refresh(room)
+    
+    return {
+        "room": {
+            "id": room.id,
+            "name": room.name,
+            "floorplan_id": room.floorplan_id,
+            "x": room.x,
+            "y": room.y,
+        }
     }

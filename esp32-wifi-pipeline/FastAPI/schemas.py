@@ -44,5 +44,19 @@ class RoomUpdate(BaseModel):
     building_id: Optional[int] = None
     floor: Optional[str] = None
     room_type: Optional[str] = None
-    
+
+
+class FloorPlanUrlCreate(BaseModel):
+    building_id: int
+    floor_name: str
+    image_url: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "building_id": 1,
+                "floor_name": "Ground Floor",
+                "image_url": "https://example.com/floorplan.png",
+            }
+        }
     

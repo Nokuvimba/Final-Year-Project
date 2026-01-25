@@ -18,7 +18,7 @@ from models import (
     RoomScanDB,
     FloorPlanDB,
 )
-from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate
+from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate, FloorPlanUrlCreate
 import os
 import uuid
 
@@ -624,6 +624,52 @@ def create_floorplan(
         building_id=building_id,
         floor_name=floor_name,
         image_url=f"/uploads/floorplans/{filename}"
+    )
+    db.add(floorplan)
+    db.commit()
+    db.refresh(floorplan)
+    
+    return {
+        "floorplan": {
+            "id": floorplan.id,
+            "building_id": floorplan.building_id,
+            "floor_name": floorplan.floor_name,
+            "image_url": floorplan.image_url,
+            "created_at": floorplan.created_at,
+        }
+    }
+
+
+@app.post("/floorplans/url")
+def create_floorplan_from_url(
+    payload: FloorPlanUrlCreate,
+    db: Session = Depends(get_db),
+):
+    # Validate building exists
+    building = db.get(BuildingDB, payload.building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+    
+    # Check for existing floor plan
+    existing = db.query(FloorPlanDB).filter(
+        FloorPlanDB.building_id == payload.building_id,
+        FloorPlanDB.floor_name == payload.floor_name
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
+    
+    # Validate image URL
+    if not payload.image_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Image URL must start with http:// or https://")
+    
+    if not payload.image_url.lower().endswith((".png", ".jpg", ".jpeg")):
+        raise HTTPException(status_code=400, detail="Image URL must end with .png, .jpg, or .jpeg")
+    
+    # Create floor plan record
+    floorplan = FloorPlanDB(
+        building_id=payload.building_id,
+        floor_name=payload.floor_name,
+        image_url=payload.image_url
     )
     db.add(floorplan)
     db.commit()

@@ -56,6 +56,21 @@ export type ScanSession = {
   is_active: boolean;
 };
 
+export type FloorPlan = {
+  id: number;
+  floor_name: string;
+  image_url: string;
+  created_at: string;
+};
+
+export type BuildingFloorPlans = {
+  building: {
+    id: number;
+    name: string;
+  };
+  floorplans: FloorPlan[];
+};
+
 // Rows returned by /rooms/{room_id}/wifi
 export type RoomWifiRow = {
   id: number;
@@ -279,4 +294,16 @@ export async function stopRoomScan(roomId: number): Promise<void> {
   });
 
   await handleJson(res);
+}
+
+// ---------- Floor Plans ----------
+
+export async function fetchBuildingFloorPlans(
+  buildingId: number
+): Promise<BuildingFloorPlans> {
+  const res = await fetch(
+    `${API_BASE}/buildings/${buildingId}/floorplans`,
+    { cache: "no-store" }
+  );
+  return handleJson(res);
 }

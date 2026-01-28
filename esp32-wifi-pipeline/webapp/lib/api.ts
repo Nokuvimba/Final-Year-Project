@@ -11,6 +11,15 @@ const isServer = typeof window === "undefined";
 const API_BASE = isServer
   ? `${process.env.NEXT_PUBLIC_SITE_URL}/api`
   : "/api";
+
+// Helper to build correct image URLs
+export function getImageUrl(imageUrl: string): string {
+  if (imageUrl.startsWith("http")) {
+    return imageUrl;
+  }
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  return `${baseUrl}${imageUrl}`;
+}
 // ---------- Types ----------
 
 export type Building = {
@@ -61,6 +70,7 @@ export type FloorPlan = {
   floor_name: string;
   image_url: string;
   created_at: string;
+  building_id?: number;
 };
 
 export type BuildingFloorPlans = {
@@ -306,4 +316,40 @@ export async function fetchBuildingFloorPlans(
     { cache: "no-store" }
   );
   return handleJson(res);
+}
+
+export async function uploadFloorPlan(
+  buildingId: number,
+  floorName: string,
+  file: File
+): Promise<FloorPlan> {
+  const formData = new FormData();
+  formData.append("building_id", buildingId.toString());
+  formData.append("floor_name", floorName);
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE}/floorplans`, {
+    method: "POST",
+    body: formData,
+  });
+  const data = await handleJson<{ floorplan: FloorPlan }>(res);
+  return data.floorplan;
+}
+
+export async function createFloorPlanFromUrl(
+  buildingId: number,
+  floorName: string,
+  imageUrl: string
+): Promise<FloorPlan> {
+  const res = await fetch(`${API_BASE}/floorplans/url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      building_id: buildingId,
+      floor_name: floorName,
+      image_url: imageUrl,
+    }),
+  });
+  const data = await handleJson<{ floorplan: FloorPlan }>(res);
+  return data.floorplan;
 }

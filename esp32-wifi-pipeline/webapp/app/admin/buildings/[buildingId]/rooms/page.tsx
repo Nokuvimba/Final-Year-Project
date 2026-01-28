@@ -207,16 +207,24 @@ export default function AdminRoomsPage({ params }: Props) {
           <p className="page-subtitle">{buildingDescription}</p>
         )}
 
-        <button
-          className="button button-primary"
-          type="button"
-          onClick={() => {
-            setError(null);
-            setShowAddRoom(true);
-          }}
-        >
-          + Add Room
-        </button>
+        <div className="page-actions">
+          <Link
+            href={`/admin/buildings/${buildingId}/floorplans`}
+            className="button button-secondary"
+          >
+            Floor Plans
+          </Link>
+          <button
+            className="button button-primary"
+            type="button"
+            onClick={() => {
+              setError(null);
+              setShowAddRoom(true);
+            }}
+          >
+            + Add Room
+          </button>
+        </div>
       </header>
 
       {error && <div className="alert alert-error">{error}</div>}

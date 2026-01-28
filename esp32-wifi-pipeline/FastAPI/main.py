@@ -662,9 +662,6 @@ def create_floorplan_from_url(
     if not payload.image_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Image URL must start with http:// or https://")
     
-    if not payload.image_url.lower().endswith((".png", ".jpg", ".jpeg")):
-        raise HTTPException(status_code=400, detail="Image URL must end with .png, .jpg, or .jpeg")
-    
     # Create floor plan record
     floorplan = FloorPlanDB(
         building_id=payload.building_id,

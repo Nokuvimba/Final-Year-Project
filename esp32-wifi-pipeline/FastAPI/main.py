@@ -683,6 +683,69 @@ def create_floorplan_from_url(
     }
 
 
+@app.put("/floorplans/{floorplan_id}")
+def update_floorplan(
+    floorplan_id: int,
+    payload: FloorPlanUrlCreate,
+    db: Session = Depends(get_db),
+):
+    floorplan = db.get(FloorPlanDB, floorplan_id) #Get existing floor plan
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Check for existing floor plan with same name (excluding current one)
+    existing = db.query(FloorPlanDB).filter(
+        FloorPlanDB.building_id == payload.building_id,
+        FloorPlanDB.floor_name == payload.floor_name,
+        FloorPlanDB.id != floorplan_id 
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
+    
+    # Validate image URL if provided
+    if payload.image_url and not payload.image_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Image URL must start with http:// or https://")
+    
+    # Update floor plan
+    floorplan.floor_name = payload.floor_name
+    if payload.image_url:
+        floorplan.image_url = payload.image_url
+    
+    db.commit()
+    db.refresh(floorplan)
+    
+    return {
+        "floorplan": {
+            "id": floorplan.id,
+            "building_id": floorplan.building_id,
+            "floor_name": floorplan.floor_name,
+            "image_url": floorplan.image_url,
+            "created_at": floorplan.created_at,
+        }
+    }
+
+
+@app.delete("/floorplans/{floorplan_id}")
+def delete_floorplan(
+    floorplan_id: int, # Floor plan ID to delete
+    db: Session = Depends(get_db), 
+):
+    floorplan = db.get(FloorPlanDB, floorplan_id) #Get existing floor plan
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Delete associated file if it's a local upload
+    if floorplan.image_url.startswith("/uploads/"):
+        file_path = floorplan.image_url[1:]  # Remove leading slash
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    
+    db.delete(floorplan)
+    db.commit()
+    
+    return {"message": "Floor plan deleted successfully"}
+
+
 @app.get("/buildings/{building_id}/floorplans")
 def get_building_floorplans(
     building_id: int,

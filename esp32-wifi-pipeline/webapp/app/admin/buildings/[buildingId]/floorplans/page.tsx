@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { fetchBuildingFloorPlans, uploadFloorPlan, createFloorPlanFromUrl, getImageUrl, type BuildingFloorPlans, type FloorPlan } from "../../../../../lib/api";
+import { fetchBuildingFloorPlans, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, getImageUrl, type BuildingFloorPlans, type FloorPlan } from "../../../../../lib/api";
 
 interface FloorPlansPageProps {
   params: Promise<{
@@ -16,6 +16,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedFloorPlan, setSelectedFloorPlan] = useState<FloorPlan | null>(null);
   const [showUploadForm, setShowUploadForm] = useState(false);
+  const [editingFloorPlan, setEditingFloorPlan] = useState<FloorPlan | null>(null);
   const [uploadType, setUploadType] = useState<"file" | "url">("file");
   const [uploading, setUploading] = useState(false);
   const [floorName, setFloorName] = useState("");
@@ -51,7 +52,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       return;
     }
 
-    if (uploadType === "file" && !selectedFile) {
+    if (uploadType === "file" && !selectedFile && !editingFloorPlan) {
       setError("Please select a file");
       return;
     }
@@ -66,25 +67,68 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       setError(null);
 
       let newFloorPlan: FloorPlan;
-      if (uploadType === "file" && selectedFile) {
-        newFloorPlan = await uploadFloorPlan(buildingId, floorName, selectedFile);
+      if (editingFloorPlan) {
+        // Update existing floor plan
+        newFloorPlan = await updateFloorPlan(
+          editingFloorPlan.id,
+          buildingId,
+          floorName,
+          uploadType === "url" ? imageUrl : undefined
+        );
       } else {
-        newFloorPlan = await createFloorPlanFromUrl(buildingId, floorName, imageUrl);
+        // Create new floor plan
+        if (uploadType === "file" && selectedFile) {
+          newFloorPlan = await uploadFloorPlan(buildingId, floorName, selectedFile);
+        } else {
+          newFloorPlan = await createFloorPlanFromUrl(buildingId, floorName, imageUrl);
+        }
       }
 
       // Reset form and reload data
-      setFloorName("");
-      setImageUrl("");
-      setSelectedFile(null);
-      setShowUploadForm(false);
+      resetForm();
       await loadFloorPlans();
       
-      // Select the newly added floor plan
+      // Select the newly added/updated floor plan
       setSelectedFloorPlan(newFloorPlan);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload floor plan");
+      setError(err instanceof Error ? err.message : "Failed to save floor plan");
     } finally {
       setUploading(false);
+    }
+  }
+
+  function resetForm() {
+    setFloorName("");
+    setImageUrl("");
+    setSelectedFile(null);
+    setShowUploadForm(false);
+    setEditingFloorPlan(null);
+  }
+
+  function handleEdit(floorPlan: FloorPlan) {
+    setEditingFloorPlan(floorPlan);
+    setFloorName(floorPlan.floor_name);
+    setImageUrl(floorPlan.image_url.startsWith("http") ? floorPlan.image_url : "");
+    setUploadType(floorPlan.image_url.startsWith("http") ? "url" : "file");
+    setShowUploadForm(true);
+  }
+
+  async function handleDelete(floorPlan: FloorPlan) {
+    if (!window.confirm(`Delete floor plan "${floorPlan.floor_name}"?`)) {
+      return;
+    }
+
+    try {
+      setError(null);
+      await deleteFloorPlan(floorPlan.id);
+      await loadFloorPlans();
+      
+      // Clear selection if deleted floor plan was selected
+      if (selectedFloorPlan?.id === floorPlan.id) {
+        setSelectedFloorPlan(data?.floorplans[0] || null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete floor plan");
     }
   }
 
@@ -128,7 +172,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       {showUploadForm && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h2 className="modal-title">Add Floor Plan</h2>
+            <h2 className="modal-title">{editingFloorPlan ? "Edit Floor Plan" : "Add Floor Plan"}</h2>
             
             <div className="modal-form">
               <div className="form-group">
@@ -171,7 +215,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
               {uploadType === "file" ? (
                 <div className="form-group">
                   <label className="form-label" htmlFor="file-input">
-                    Select Image File
+                    Select Image File {editingFloorPlan && "(optional - leave empty to keep current image)"}
                   </label>
                   <input
                     id="file-input"
@@ -202,7 +246,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
               <div className="modal-footer">
                 <button
                   onClick={() => {
-                    setShowUploadForm(false);
+                    resetForm();
                     setError(null);
                   }}
                   className="button button-secondary"
@@ -216,7 +260,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
                   className="button button-primary"
                   type="button"
                 >
-                  {uploading ? "Uploading…" : "Upload"}
+                  {uploading ? (editingFloorPlan ? "Updating…" : "Uploading…") : (editingFloorPlan ? "Update" : "Upload")}
                 </button>
               </div>
             </div>
@@ -259,12 +303,32 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
           {/* Floor Plan Display */}
           {selectedFloorPlan && (
             <div className="floorplan-display">
-              <h2 className="floorplan-title">
-                {selectedFloorPlan.floor_name}
-              </h2>
-              <p className="floorplan-date">
-                Created: {new Date(selectedFloorPlan.created_at).toLocaleDateString()}
-              </p>
+              <div className="floorplan-header">
+                <div>
+                  <h2 className="floorplan-title">
+                    {selectedFloorPlan.floor_name}
+                  </h2>
+                  <p className="floorplan-date">
+                    Created: {new Date(selectedFloorPlan.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+                <div className="floorplan-actions">
+                  <button
+                    onClick={() => handleEdit(selectedFloorPlan)}
+                    className="button button-secondary button-small"
+                    type="button"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(selectedFloorPlan)}
+                    className="button button-danger button-small"
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
               <div className="floorplan-image-container">
                 <img
                   src={getImageUrl(selectedFloorPlan.image_url)}

@@ -1105,6 +1105,18 @@ td.time {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
+.floorplan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.floorplan-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .floorplan-title {
   font-size: 20px;
   font-weight: 600;

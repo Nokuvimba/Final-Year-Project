@@ -353,3 +353,32 @@ export async function createFloorPlanFromUrl(
   const data = await handleJson<{ floorplan: FloorPlan }>(res);
   return data.floorplan;
 }
+
+export async function updateFloorPlan(
+  floorplanId: number,
+  buildingId: number,
+  floorName: string,
+  imageUrl?: string
+): Promise<FloorPlan> {
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      building_id: buildingId,
+      floor_name: floorName,
+      image_url: imageUrl,
+    }),
+  });
+  const data = await handleJson<{ floorplan: FloorPlan }>(res);
+  return data.floorplan;
+}
+
+export async function deleteFloorPlan(floorplanId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Delete failed: ${res.status} ${text}`);
+  }
+}

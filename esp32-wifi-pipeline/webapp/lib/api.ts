@@ -35,6 +35,10 @@ export type Room = {
   building_name: string;
   floor: string | null;
   room_type: string | null;
+
+  floorplan_id: number | null;
+  x: number | null;
+  y: number | null;
 };
 
 export type WifiScan = {

@@ -449,6 +449,9 @@ def list_rooms(
                 "building_name": r.building.name,
                 "floor": r.floor,
                 "room_type": r.room_type,
+                "x": r.x,
+                "y": r.y,
+                "floorplan_id": r.floorplan_id,
             }
             for r in rows
         ]

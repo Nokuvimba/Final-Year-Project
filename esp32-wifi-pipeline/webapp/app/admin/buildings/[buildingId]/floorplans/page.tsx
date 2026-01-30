@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
-import { fetchBuildingFloorPlans, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, getImageUrl, type BuildingFloorPlans, type FloorPlan } from "../../../../../lib/api";
+import { useState, useEffect, use, useRef, type MouseEvent } from "react";
+import { fetchBuildingFloorPlans, fetchRooms, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, updateRoomPosition, getImageUrl, type BuildingFloorPlans, type FloorPlan, type Room } from "../../../../../lib/api";
 
 interface FloorPlansPageProps {
   params: Promise<{
@@ -12,6 +12,9 @@ interface FloorPlansPageProps {
 export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   const resolvedParams = use(params);
   const [data, setData] = useState<BuildingFloorPlans | null>(null);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const [clickMessage, setClickMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFloorPlan, setSelectedFloorPlan] = useState<FloorPlan | null>(null);
@@ -23,10 +26,13 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   const [imageUrl, setImageUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  const imgRef = useRef<HTMLImageElement>(null);
+
   const buildingId = parseInt(resolvedParams.buildingId);
 
   useEffect(() => {
     loadFloorPlans();
+    loadRooms();
   }, [buildingId]);
 
   async function loadFloorPlans() {
@@ -43,6 +49,15 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       setError(err instanceof Error ? err.message : "Failed to load floor plans");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadRooms() {
+    try {
+      const roomsData = await fetchRooms(buildingId);
+      setRooms(roomsData);
+    } catch (err) {
+      console.error('Failed to load rooms:', err);
     }
   }
 
@@ -131,6 +146,85 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       setError(err instanceof Error ? err.message : "Failed to delete floor plan");
     }
   }
+
+  // Click handler for placing rooms on floor plan
+async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
+    // Clear any previous click message
+    setClickMessage(null);
+    
+    // Check if a room is selected for placement
+    if (!activeRoom) {
+      setClickMessage("Select a room first");
+      // Auto-clear message after 3 seconds
+      setTimeout(() => setClickMessage(null), 3000);
+      return;
+    }
+
+    // Check if we have a valid floor plan and image reference
+    if (!selectedFloorPlan || !imgRef.current) {
+      return;
+    }
+
+    try {
+      // Get the bounding rectangle of the image element
+      // This gives us the actual rendered size and position of the image on screen
+      const rect = imgRef.current.getBoundingClientRect();
+      
+      // Calculate the click position relative to the image
+      // We subtract rect.left/top to get coordinates relative to the image's top-left corner
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+      
+      // Normalize coordinates to [0,1] range
+      // We divide by the actual rendered width/height to get a percentage
+      // This makes the coordinates independent of the image's display size
+      let x = clickX / rect.width;
+      let y = clickY / rect.height;
+      
+      // Clamp coordinates to valid range [0,1]
+      // This ensures we don't send invalid coordinates if click is slightly outside image bounds
+      x = Math.max(0, Math.min(1, x));
+      y = Math.max(0, Math.min(1, y));
+      
+      // Call the API to update the room's position
+      await updateRoomPosition(activeRoom.id, {
+        floorplan_id: selectedFloorPlan.id,
+        x: x,
+        y: y
+      });
+      
+      // Update the local room state immediately so the marker appears without refresh
+      // Find the room in our local state and update its position
+      setRooms(prevRooms => 
+        prevRooms.map(room => 
+          room.id === activeRoom.id 
+            ? { ...room, x, y, floorplan_id: selectedFloorPlan.id }
+            : room
+        )
+      );
+      
+      // Show success message
+      setClickMessage(`Placed "${activeRoom.name}" at position (${Math.round(x * 100)}%, ${Math.round(y * 100)}%)`);
+      setTimeout(() => setClickMessage(null), 3000);
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to place room");
+    }
+  }
+
+  // Get rooms that match the current floor
+  const floorRooms = selectedFloorPlan 
+    ? rooms.filter(room => room.floor === selectedFloorPlan.floor_name)
+    : [];
+
+  // Get rooms that are positioned on the current floor plan
+  const positionedRooms = selectedFloorPlan
+    ? rooms.filter(room => 
+        room.floorplan_id === selectedFloorPlan.id && 
+        room.x !== null && 
+        room.y !== null
+      )
+    : [];
 
   if (loading) {
     return (
@@ -329,12 +423,75 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
                   </button>
                 </div>
               </div>
-              <div className="floorplan-image-container">
+
+              {/* Room Selection */}
+              {floorRooms.length > 0 && (
+                <div className="room-placement-section">
+                  <h3 className="section-title">Place Rooms on Floor Plan</h3>
+                  <div className="form-group">
+                    <label htmlFor="room-select" className="form-label">
+                      Select Room to Place:
+                    </label>
+                    <select
+                      id="room-select"
+                      value={activeRoom?.id || ""}
+                      onChange={(e) => {
+                        const room = floorRooms.find(r => r.id === parseInt(e.target.value));
+                        setActiveRoom(room || null);
+                        setClickMessage(null);
+                      }}
+                      className="input"
+                    >
+                      <option value="">-- Select a room --</option>
+                      {floorRooms.map((room) => (
+                        <option key={room.id} value={room.id}>
+                          {room.name} {room.room_type && `(${room.room_type})`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {clickMessage && (
+                    <div className="click-message">
+                      {clickMessage}
+                    </div>
+                  )}
+                  <p className="form-help">
+                    {activeRoom 
+                      ? `Click on the floor plan to place "${activeRoom.name}"`
+                      : "Select a room above, then click on the floor plan to place it"
+                    }
+                  </p>
+                </div>
+              )}
+
+              {/* Floor Plan Image with Markers */}
+              <div className="floorplan-image-container" style={{ position: 'relative' }}>
                 <img
+                  ref={imgRef}
                   src={getImageUrl(selectedFloorPlan.image_url)}
                   alt={`Floor plan for ${selectedFloorPlan.floor_name}`}
                   className="floorplan-image"
+                  onClick={handleFloorPlanClick}
+                  style={{ cursor: activeRoom ? 'crosshair' : 'default' }}
                 />
+                
+                {/* Room Markers */}
+                {positionedRooms.map((room) => (
+                  <div
+                    key={room.id}
+                    className="room-marker"
+                    style={{
+                      position: 'absolute',
+                      left: `${(room.x || 0) * 100}%`,
+                      top: `${(room.y || 0) * 100}%`,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    title={`${room.name} ${room.room_type ? `(${room.room_type})` : ''}`}
+                  >
+                    <div className="room-marker-dot"></div>
+                    <div className="room-marker-label">{room.name}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

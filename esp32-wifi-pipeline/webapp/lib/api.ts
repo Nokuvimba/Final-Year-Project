@@ -382,3 +382,22 @@ export async function deleteFloorPlan(floorplanId: number): Promise<void> {
     throw new Error(`Delete failed: ${res.status} ${text}`);
   }
 }
+
+export async function updateRoomPosition(
+  roomId: number,
+  payload: {
+    floorplan_id: number;
+    x: number;
+    y: number;
+  }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}/position`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Update position failed: ${res.status} ${text}`);
+  }
+}

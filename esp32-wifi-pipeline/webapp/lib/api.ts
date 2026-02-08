@@ -85,6 +85,16 @@ export type BuildingFloorPlans = {
   floorplans: FloorPlan[];
 };
 
+export type HeatmapPoint = {
+  room_id: number;
+  room_name: string;
+  x: number | null;
+  y: number | null;
+  avg_rssi: number | null;
+  level: "strong" | "medium" | "low" | "weak" | null;
+  samples: number;
+};
+
 // Rows returned by /rooms/{room_id}/wifi
 export type RoomWifiRow = {
   id: number;
@@ -404,4 +414,17 @@ export async function updateRoomPosition(
     const text = await res.text().catch(() => "");
     throw new Error(`Update position failed: ${res.status} ${text}`);
   }
+}
+
+
+// ---------- Heatmap ----------
+
+export async function fetchFloorplanHeatmap(
+  floorplanId: number
+): Promise<HeatmapPoint[]> {
+  const res = await fetch(
+    `${API_BASE}/heatmap/floorplan/${floorplanId}/latest`,
+    { cache: "no-store" }
+  );
+  return handleJson(res);
 }

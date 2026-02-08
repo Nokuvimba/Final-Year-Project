@@ -533,16 +533,42 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
                         left: `${point.x * 100}%`,
                         top: `${point.y * 100}%`,
                         transform: 'translate(-50%, -50%)',
-                        width: '60px',
-                        height: '60px',
+                        width: '180px',
+                        height: '180px',
                         borderRadius: '50%',
                         backgroundColor: getHeatColor(point.level),
-                        filter: 'blur(8px)',
+                        filter: 'blur(20px)',
                         pointerEvents: 'none'
                       }}
                     />
                   )
                 ))}
+              </div>
+
+              {/* Signal Legend */}
+              <div style={{
+                marginTop: '16px',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                padding: '16px',
+                borderRadius: '8px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                color: '#000'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>Signal Strength</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+                    <div style={{
+                      height: '20px',
+                      flex: 1,
+                      minWidth: '200px',
+                      background: 'linear-gradient(to right, rgba(255, 0, 0, 0.7), rgba(255, 165, 0, 0.7), rgba(255, 255, 0, 0.7), rgba(0, 255, 0, 0.7))',
+                      borderRadius: '10px'
+                    }} />
+                    <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      Strong (green) = -50 dBm or better • Medium (yellow) = -50 to -60 dBm • Low (orange) = -60 to -70 dBm • Weak (red) = below -70 dBm
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

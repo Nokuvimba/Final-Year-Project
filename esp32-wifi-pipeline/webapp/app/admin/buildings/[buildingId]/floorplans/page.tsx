@@ -166,8 +166,19 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
     }
   }
 
+  // Get color for heat marker based on signal level
+  function getHeatColor(level: string | null): string {
+    switch (level) {
+      case "strong": return "rgba(0, 255, 0, 0.5)";
+      case "medium": return "rgba(255, 255, 0, 0.5)";
+      case "low": return "rgba(255, 165, 0, 0.5)";
+      case "weak": return "rgba(255, 0, 0, 0.5)";
+      default: return "rgba(128, 128, 128, 0.3)";
+    }
+  }
+
   // Click handler for placing rooms on floor plan
-async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
+  async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
     // Clear any previous click message
     setClickMessage(null);
     
@@ -512,23 +523,26 @@ async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
                   </div>
                 ))}
 
-                {/* Test Heat Marker - Single Dot */}
-                {heatmapData.length > 0 && heatmapData[0].x !== null && heatmapData[0].y !== null && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${heatmapData[0].x * 100}%`,
-                      top: `${heatmapData[0].y * 100}%`,
-                      transform: 'translate(-50%, -50%)',
-                      width: '60px',
-                      height: '60px',
-                      borderRadius: '50%',
-                      backgroundColor: 'rgba(255, 0, 0, 0.4)',
-                      filter: 'blur(8px)',
-                      pointerEvents: 'none'
-                    }}
-                  />
-                )}
+                {/* Heat Markers - All Rooms */}
+                {heatmapData.map((point) => (
+                  point.x !== null && point.y !== null && (
+                    <div
+                      key={`heat-${point.room_id}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${point.x * 100}%`,
+                        top: `${point.y * 100}%`,
+                        transform: 'translate(-50%, -50%)',
+                        width: '60px',
+                        height: '60px',
+                        borderRadius: '50%',
+                        backgroundColor: getHeatColor(point.level),
+                        filter: 'blur(8px)',
+                        pointerEvents: 'none'
+                      }}
+                    />
+                  )
+                ))}
               </div>
             </div>
           )}

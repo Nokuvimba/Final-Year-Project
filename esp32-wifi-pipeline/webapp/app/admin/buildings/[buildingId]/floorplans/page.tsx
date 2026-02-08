@@ -123,8 +123,9 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   function handleEdit(floorPlan: FloorPlan) {
     setEditingFloorPlan(floorPlan);
     setFloorName(floorPlan.floor_name);
-    setImageUrl(floorPlan.image_url.startsWith("http") ? floorPlan.image_url : "");
-    setUploadType(floorPlan.image_url.startsWith("http") ? "url" : "file");
+    const isExternalUrl = floorPlan.image_url?.startsWith("http") ?? false;
+    setImageUrl(isExternalUrl ? floorPlan.image_url : "");
+    setUploadType(isExternalUrl ? "url" : "file");
     setShowUploadForm(true);
   }
 

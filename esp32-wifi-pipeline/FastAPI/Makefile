@@ -20,3 +20,4 @@ createEnv:
 	python3 -m venv .venv
 
 	pip install python-multipart
+	python3 -m pip install --upgrade pip

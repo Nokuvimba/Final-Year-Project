@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use, useRef, type MouseEvent } from "react";
-import { fetchBuildingFloorPlans, fetchRooms, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, updateRoomPosition, getImageUrl, type BuildingFloorPlans, type FloorPlan, type Room } from "../../../../../lib/api";
+import { fetchBuildingFloorPlans, fetchRooms, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, updateRoomPosition, getImageUrl, fetchFloorplanHeatmap, type BuildingFloorPlans, type FloorPlan, type Room, type HeatmapPoint } from "../../../../../lib/api";
 
 interface FloorPlansPageProps {
   params: Promise<{
@@ -25,6 +25,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   const [floorName, setFloorName] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [heatmapData, setHeatmapData] = useState<HeatmapPoint[]>([]);
 
   const imgRef = useRef<HTMLImageElement>(null);
 
@@ -34,6 +35,12 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
     loadFloorPlans();
     loadRooms();
   }, [buildingId]);
+
+  useEffect(() => {
+    if (selectedFloorPlan) {
+      loadHeatmap();
+    }
+  }, [selectedFloorPlan]);
 
   async function loadFloorPlans() {
     try {
@@ -58,6 +65,17 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       setRooms(roomsData);
     } catch (err) {
       console.error('Failed to load rooms:', err);
+    }
+  }
+
+  async function loadHeatmap() {
+    if (!selectedFloorPlan) return;
+    try {
+      const heatmap = await fetchFloorplanHeatmap(selectedFloorPlan.id);
+      console.log('Heatmap data:', heatmap);
+      setHeatmapData(heatmap);
+    } catch (err) {
+      console.error('Failed to load heatmap:', err);
     }
   }
 
@@ -493,6 +511,24 @@ async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
                     <div className="room-marker-label">{room.name}</div>
                   </div>
                 ))}
+
+                {/* Test Heat Marker - Single Dot */}
+                {heatmapData.length > 0 && heatmapData[0].x !== null && heatmapData[0].y !== null && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${heatmapData[0].x * 100}%`,
+                      top: `${heatmapData[0].y * 100}%`,
+                      transform: 'translate(-50%, -50%)',
+                      width: '60px',
+                      height: '60px',
+                      borderRadius: '50%',
+                      backgroundColor: 'rgba(255, 0, 0, 0.4)',
+                      filter: 'blur(8px)',
+                      pointerEvents: 'none'
+                    }}
+                  />
+                )}
               </div>
             </div>
           )}

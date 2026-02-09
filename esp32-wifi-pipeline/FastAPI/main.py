@@ -18,7 +18,7 @@ from models import (
     RoomScanDB,
     FloorPlanDB,
 )
-from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate, FloorPlanUrlCreate
+from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate, FloorPlanUrlCreate, HeatmapPoint
 import os
 import uuid
 
@@ -821,3 +821,146 @@ def update_room_position(
             "y": room.y,
         }
     }
+
+
+
+# Heatmap endpoints
+
+def compute_signal_level(avg_rssi: Optional[float]) -> Optional[str]:
+    """Computing signal strength level from average RSSI"""
+    if avg_rssi is None:
+        return None
+    if avg_rssi >= -50:
+        return "strong"
+    elif avg_rssi >= -60:
+        return "medium"
+    elif avg_rssi >= -70:
+        return "low"
+    else:
+        return "weak"
+
+
+@app.get("/heatmap/floorplan/{floorplan_id}", response_model=List[HeatmapPoint])
+def get_floorplan_heatmap(
+    floorplan_id: int,
+    session_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    # Validate floorplan exists
+    floorplan = db.get(FloorPlanDB, floorplan_id)
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Validate session exists
+    session = db.get(ScanSessionDB, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Scan session not found")
+    
+    # Validate session's room belongs to the same floorplan
+    if session.room.floorplan_id != floorplan_id:
+        raise HTTPException(
+            status_code=400, 
+            detail="Session's room does not belong to this floor plan"
+        )
+    
+    # Query aggregation: get avg RSSI and sample count for the session's room
+    result = (
+        db.query(
+            RoomDB.id,
+            RoomDB.name,
+            RoomDB.x,
+            RoomDB.y,
+            func.avg(WifiScanDB.rssi).label("avg_rssi"),
+            func.count(WifiScanDB.id).label("samples")
+        )
+        .join(RoomScanDB, RoomScanDB.room_id == RoomDB.id)
+        .join(WifiScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
+        .filter(RoomScanDB.session_id == session_id)
+        .group_by(RoomDB.id, RoomDB.name, RoomDB.x, RoomDB.y)
+        .all()
+    )
+    
+    heatmap_data = []
+    for row in result:
+        avg_rssi = float(row.avg_rssi) if row.avg_rssi is not None else None
+        heatmap_data.append(
+            HeatmapPoint(
+                room_id=row.id,
+                room_name=row.name,
+                x=row.x,
+                y=row.y,
+                avg_rssi=avg_rssi,
+                level=compute_signal_level(avg_rssi),
+                samples=row.samples
+            )
+        )
+    
+    return heatmap_data
+
+
+@app.get("/heatmap/floorplan/{floorplan_id}/latest", response_model=List[HeatmapPoint])
+def get_floorplan_heatmap_latest(
+    floorplan_id: int,
+    db: Session = Depends(get_db),
+):
+    # Validate floorplan exists
+    floorplan = db.get(FloorPlanDB, floorplan_id)
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    
+    # Get all rooms on this floorplan
+    rooms = db.query(RoomDB).filter(RoomDB.floorplan_id == floorplan_id).all()
+    
+    heatmap_data = []
+    
+    for room in rooms:
+        # Find the most recent session for this room
+        latest_session = (
+            db.query(ScanSessionDB)
+            .filter(ScanSessionDB.room_id == room.id)
+            .order_by(ScanSessionDB.started_at.desc())
+            .first()
+        )
+        
+        if not latest_session:
+            # No session for this room, include with null values
+            heatmap_data.append(
+                HeatmapPoint(
+                    room_id=room.id,
+                    room_name=room.name,
+                    x=room.x,
+                    y=room.y,
+                    avg_rssi=None,
+                    level=None,
+                    samples=0
+                )
+            )
+            continue
+        
+        # Get aggregated data for this session
+        result = (
+            db.query(
+                func.avg(WifiScanDB.rssi).label("avg_rssi"),
+                func.count(WifiScanDB.id).label("samples")
+            )
+            .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
+            .filter(RoomScanDB.session_id == latest_session.id)
+            .first()
+        )
+        
+        avg_rssi = float(result.avg_rssi) if result.avg_rssi is not None else None
+        samples = result.samples if result.samples else 0
+        
+        heatmap_data.append(
+            HeatmapPoint(
+                room_id=room.id,
+                room_name=room.name,
+                x=room.x,
+                y=room.y,
+                avg_rssi=avg_rssi,
+                level=compute_signal_level(avg_rssi),
+                samples=samples
+            )
+        )
+    
+    return heatmap_data

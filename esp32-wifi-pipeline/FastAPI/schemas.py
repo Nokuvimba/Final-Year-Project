@@ -60,3 +60,26 @@ class FloorPlanUrlCreate(BaseModel):
             }
         }
     
+
+
+class HeatmapPoint(BaseModel):
+    room_id: int
+    room_name: str
+    x: Optional[float]
+    y: Optional[float]
+    avg_rssi: Optional[float]
+    level: Optional[str]
+    samples: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "room_id": 1,
+                "room_name": "my bedroom",
+                "x": 0.42,
+                "y": 0.31,
+                "avg_rssi": -65.2,
+                "level": "low",
+                "samples": 58
+            }
+        }

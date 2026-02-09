@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use, useRef, type MouseEvent } from "react";
-import { fetchBuildingFloorPlans, fetchRooms, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, updateRoomPosition, getImageUrl, type BuildingFloorPlans, type FloorPlan, type Room } from "../../../../../lib/api";
+import { fetchBuildingFloorPlans, fetchRooms, uploadFloorPlan, createFloorPlanFromUrl, updateFloorPlan, deleteFloorPlan, updateRoomPosition, getImageUrl, fetchFloorplanHeatmap, type BuildingFloorPlans, type FloorPlan, type Room, type HeatmapPoint } from "../../../../../lib/api";
 
 interface FloorPlansPageProps {
   params: Promise<{
@@ -25,6 +25,7 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   const [floorName, setFloorName] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [heatmapData, setHeatmapData] = useState<HeatmapPoint[]>([]);
 
   const imgRef = useRef<HTMLImageElement>(null);
 
@@ -34,6 +35,12 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
     loadFloorPlans();
     loadRooms();
   }, [buildingId]);
+
+  useEffect(() => {
+    if (selectedFloorPlan) {
+      loadHeatmap();
+    }
+  }, [selectedFloorPlan]);
 
   async function loadFloorPlans() {
     try {
@@ -58,6 +65,17 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
       setRooms(roomsData);
     } catch (err) {
       console.error('Failed to load rooms:', err);
+    }
+  }
+
+  async function loadHeatmap() {
+    if (!selectedFloorPlan) return;
+    try {
+      const heatmap = await fetchFloorplanHeatmap(selectedFloorPlan.id);
+      console.log('Heatmap data:', heatmap);
+      setHeatmapData(heatmap);
+    } catch (err) {
+      console.error('Failed to load heatmap:', err);
     }
   }
 
@@ -123,8 +141,9 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
   function handleEdit(floorPlan: FloorPlan) {
     setEditingFloorPlan(floorPlan);
     setFloorName(floorPlan.floor_name);
-    setImageUrl(floorPlan.image_url.startsWith("http") ? floorPlan.image_url : "");
-    setUploadType(floorPlan.image_url.startsWith("http") ? "url" : "file");
+    const isExternalUrl = floorPlan.image_url?.startsWith("http") ?? false;
+    setImageUrl(isExternalUrl ? floorPlan.image_url : "");
+    setUploadType(isExternalUrl ? "url" : "file");
     setShowUploadForm(true);
   }
 
@@ -147,8 +166,19 @@ export default function FloorPlansPage({ params }: FloorPlansPageProps) {
     }
   }
 
+  // Get color for heat marker based on signal level
+  function getHeatColor(level: string | null): string {
+    switch (level) {
+      case "strong": return "rgba(0, 255, 0, 0.5)";
+      case "medium": return "rgba(255, 255, 0, 0.5)";
+      case "low": return "rgba(255, 165, 0, 0.5)";
+      case "weak": return "rgba(255, 0, 0, 0.5)";
+      default: return "rgba(128, 128, 128, 0.3)";
+    }
+  }
+
   // Click handler for placing rooms on floor plan
-async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
+  async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
     // Clear any previous click message
     setClickMessage(null);
     
@@ -492,6 +522,53 @@ async function handleFloorPlanClick(event: MouseEvent<HTMLImageElement>) {
                     <div className="room-marker-label">{room.name}</div>
                   </div>
                 ))}
+
+                {/* Heat Markers - All Rooms */}
+                {heatmapData.map((point) => (
+                  point.x !== null && point.y !== null && (
+                    <div
+                      key={`heat-${point.room_id}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${point.x * 100}%`,
+                        top: `${point.y * 100}%`,
+                        transform: 'translate(-50%, -50%)',
+                        width: '180px',
+                        height: '180px',
+                        borderRadius: '50%',
+                        backgroundColor: getHeatColor(point.level),
+                        filter: 'blur(20px)',
+                        pointerEvents: 'none'
+                      }}
+                    />
+                  )
+                ))}
+              </div>
+
+              {/* Signal Legend */}
+              <div style={{
+                marginTop: '16px',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                padding: '16px',
+                borderRadius: '8px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                color: '#000'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '14px' }}>Signal Strength</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+                    <div style={{
+                      height: '20px',
+                      flex: 1,
+                      minWidth: '200px',
+                      background: 'linear-gradient(to right, rgba(255, 0, 0, 0.7), rgba(255, 165, 0, 0.7), rgba(255, 255, 0, 0.7), rgba(0, 255, 0, 0.7))',
+                      borderRadius: '10px'
+                    }} />
+                    <div style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
+                      Strong (green) = -50 dBm or better • Medium (yellow) = -50 to -60 dBm • Low (orange) = -60 to -70 dBm • Weak (red) = below -70 dBm
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

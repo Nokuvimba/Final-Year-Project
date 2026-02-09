@@ -90,8 +90,8 @@ export default function FloorplanHeatmapViewer({
                 left: `${point.x * 100}%`,
                 top: `${point.y * 100}%`,
                 transform: 'translate(-50%, -50%)',
-                width: '120px',
-                height: '120px',
+                width: '140px',
+                height: '140px',
                 cursor: readOnly ? 'pointer' : 'default',
                 pointerEvents: readOnly ? 'auto' : 'none'
               }}
@@ -101,7 +101,7 @@ export default function FloorplanHeatmapViewer({
                 height: '100%',
                 borderRadius: '50%',
                 backgroundColor: getHeatColor(point.level),
-                filter: 'blur(20px)',
+                filter: 'blur(10px)',
                 pointerEvents: 'none'
               }} />
             </div>

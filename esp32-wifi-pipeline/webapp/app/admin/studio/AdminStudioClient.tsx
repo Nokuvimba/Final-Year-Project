@@ -72,7 +72,7 @@ export default function AdminStudioClient() {
           <div>
             <div className="font-semibold leading-tight">Map Studio</div>
             <div className="text-xs text-slate-400 leading-tight">
-              Admin workflow — floorplan → rooms → scans
+              Admin 
             </div>
           </div>
         </div>

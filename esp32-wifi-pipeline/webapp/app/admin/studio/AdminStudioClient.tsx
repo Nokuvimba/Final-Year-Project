@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import FloorplanHeatmapViewer from "@/components/floorplan/FloorplanHeatmapViewer";
-import { fetchBuildings, fetchBuildingFloorPlans, fetchRoomScans, getImageUrl, type Building, type FloorPlan, type RoomWifiRow } from "@/lib/api";
+import { fetchBuildings, fetchBuildingFloorPlans, getImageUrl, type Building, type FloorPlan } from "@/lib/api";
+import { AdminRoomWifiClient } from "@/app/admin/rooms/[roomId]/AdminRoomWifiClient";
 
 export default function AdminStudioClient() {
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
   const [floorplan, setFloorplan] = useState<FloorPlan | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
-  const [roomScans, setRoomScans] = useState<RoomWifiRow[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -33,7 +33,6 @@ export default function AdminStudioClient() {
   async function selectBuilding(building: Building) {
     setSelectedBuilding(building);
     setSelectedRoomId(null);
-    setRoomScans([]);
     try {
       const floorplansData = await fetchBuildingFloorPlans(building.id);
       if (floorplansData.floorplans.length > 0) {
@@ -47,15 +46,8 @@ export default function AdminStudioClient() {
     }
   }
 
-  async function handleRoomClick(roomId: number) {
+  function handleRoomClick(roomId: number) {
     setSelectedRoomId(roomId);
-    try {
-      const data = await fetchRoomScans(roomId, 100);
-      setRoomScans(data.rows);
-    } catch (err) {
-      console.error("Failed to load room scans:", err);
-      setRoomScans([]);
-    }
   }
 
   const filteredBuildings = buildings.filter(b => 
@@ -175,46 +167,7 @@ export default function AdminStudioClient() {
                   No room selected yet. Click a heat marker/room on the floorplan.
                 </div>
               ) : (
-                <div>
-                  <div className="mb-3">
-                    <div className="text-xs text-slate-400">Selected Room</div>
-                    <div className="text-lg font-semibold">
-                      Room #{selectedRoomId}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-white/10 bg-black/20 p-3 mb-3">
-                    <div className="text-xs text-slate-400 mb-2">
-                      Wi-Fi Scans ({roomScans.length})
-                    </div>
-                    {roomScans.length === 0 ? (
-                      <div className="text-slate-400 text-xs">No scans available for this room.</div>
-                    ) : (
-                      <div className="space-y-2 max-h-96 overflow-y-auto">
-                        {roomScans.slice(0, 20).map(scan => (
-                          <div key={scan.id} className="text-xs border-b border-white/5 pb-2">
-                            <div className="flex justify-between items-start mb-1">
-                              <span className="font-medium text-slate-200">{scan.ssid || "Hidden"}</span>
-                              <span className={`px-2 py-0.5 rounded text-[10px] ${
-                                (scan.rssi ?? -100) >= -50 ? "bg-green-500/20 text-green-400" :
-                                (scan.rssi ?? -100) >= -70 ? "bg-yellow-500/20 text-yellow-400" :
-                                "bg-red-500/20 text-red-400"
-                              }`}>
-                                {scan.rssi} dBm
-                              </span>
-                            </div>
-                            <div className="text-slate-500 font-mono text-[10px]">
-                              {scan.bssid} • Ch {scan.channel}
-                            </div>
-                            <div className="text-slate-500 text-[10px]">
-                              {new Date(scan.received_at).toLocaleString()}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <AdminRoomWifiClient roomId={selectedRoomId} variant="panel" />
               )}
             </div>
           </div>

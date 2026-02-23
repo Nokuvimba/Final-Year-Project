@@ -94,14 +94,38 @@ export function AdminRoomWifiClient({ roomId, variant = "page" }: Props) {
       )}
 
       {variant === "panel" && (
-        <div className="mb-3">
-          <div className="text-xs text-slate-400">Room: {roomData.room.name}</div>
-          <div className="text-sm text-slate-300">
-            {roomData.rows.length} scans • {uniqueNetworks.length} networks • Avg: {roomData.rows.length > 0 
-              ? Math.round(roomData.rows.reduce((sum, r) => sum + (r.rssi || 0), 0) / roomData.rows.length)
-              : 0} dBm
+        <>
+          <div className="mb-3">
+            <div className="text-xs text-slate-400">Room: {roomData.room.name}</div>
+            <div className="text-sm text-slate-300">
+              {roomData.rows.length} scans • {uniqueNetworks.length} networks • Avg: {roomData.rows.length > 0 
+                ? Math.round(roomData.rows.reduce((sum, r) => sum + (r.rssi || 0), 0) / roomData.rows.length)
+                : 0} dBm
+            </div>
           </div>
-        </div>
+
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <div className="text-xs text-slate-400">Signal Density</div>
+              <div className="text-lg font-semibold text-green-400">Medium</div>
+            </div>
+
+            <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <div className="text-xs text-slate-400">Temperature</div>
+              <div className="text-lg font-semibold">22.4°C</div>
+            </div>
+
+            <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <div className="text-xs text-slate-400">Humidity</div>
+              <div className="text-lg font-semibold">45%</div>
+            </div>
+
+            <div className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <div className="text-xs text-slate-400">Air Quality</div>
+              <div className="text-lg font-semibold text-yellow-400">Moderate</div>
+            </div>
+          </div>
+        </>
       )}
 
       {variant === "page" && (

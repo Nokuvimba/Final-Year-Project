@@ -1,16 +1,16 @@
 // app/admin/page.tsx
-import { fetchBuildings, fetchScanSessions, fetchRecentScans } from "@/lib/api";
+import { fetchBuildings, fetchDevices, fetchRecentScans } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
-  const [buildings, sessions, recentScans] = await Promise.all([
+  const [buildings, devices, recentScans] = await Promise.all([
     fetchBuildings(),
-    fetchScanSessions(),
+    fetchDevices(),
     fetchRecentScans(10),
   ]);
 
-  const activeScans = sessions.filter(s => s.is_active).length;
+  const activeDevices = devices.filter(d => d.is_active).length;
   const totalRooms = buildings.reduce((sum, b) => sum + (b.rooms?.length || 0), 0);
 
   return (
@@ -31,13 +31,13 @@ export default async function AdminDashboard() {
         </div>
 
         <div className="metric-card metric-card-green">
-          <div className="metric-card-title">Active Scans</div>
-          <div className="metric-card-value">{activeScans}</div>
+          <div className="metric-card-title">Active Devices</div>
+          <div className="metric-card-value">{activeDevices}</div>
         </div>
 
         <div className="metric-card metric-card-purple">
-          <div className="metric-card-title">Total Sessions</div>
-          <div className="metric-card-value">{sessions.length}</div>
+          <div className="metric-card-title">Total Devices</div>
+          <div className="metric-card-value">{devices.length}</div>
         </div>
 
         <div className="metric-card metric-card-blue">
@@ -75,20 +75,23 @@ export default async function AdminDashboard() {
         </section>
 
         <section className="table-card">
-          <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>Active Sessions</h3>
-          {activeScans === 0 ? (
-            <p style={{ color: "#9ca3af" }}>No active scanning sessions</p>
+          <h3 style={{ marginBottom: "16px", fontSize: "18px", fontWeight: "600" }}>Active Devices</h3>
+          {activeDevices === 0 ? (
+            <p style={{ color: "#9ca3af" }}>No active devices assigned</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {sessions.filter(s => s.is_active).slice(0, 5).map(session => (
-                <div key={session.id} style={{ 
+              {devices.filter(d => d.is_active).slice(0, 5).map(device => (
+                <div key={device.node} style={{ 
                   padding: "12px", 
                   background: "#1f2937", 
                   borderRadius: "8px"
                 }}>
-                  <div style={{ fontWeight: "500" }}>{session.building_name} - {session.room_name}</div>
+                  <div style={{ fontWeight: "500" }}>{device.node}</div>
                   <div style={{ fontSize: "12px", color: "#9ca3af" }}>
-                    Started: {new Date(session.started_at).toLocaleString()}
+                    {device.building_name} - {device.room_name}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#9ca3af" }}>
+                    Assigned: {new Date(device.assigned_at).toLocaleString()}
                   </div>
                 </div>
               ))}

@@ -27,7 +27,6 @@ class BuildingDB(Base):
         back_populates="building",
         cascade="all, delete-orphan",
     )
-    
     floorplans = relationship(
         "FloorPlanDB",
         back_populates="building",
@@ -50,7 +49,6 @@ class RoomDB(Base):
         ForeignKey("building.id", ondelete="CASCADE"),
         nullable=False,
     )
-    
     floorplan_id = Column(
         Integer,
         ForeignKey("floor_plan.id", ondelete="SET NULL"),
@@ -59,24 +57,49 @@ class RoomDB(Base):
 
     building = relationship("BuildingDB", back_populates="rooms")
     floorplan = relationship("FloorPlanDB", back_populates="rooms")
-
-    # raw scans that might have room_id set (we’re not really using this now,
-    # but keep it for backwards compatibility)
     scans = relationship("WifiScanDB", back_populates="room")
 
-    # one room → many scan sessions
-    scan_sessions = relationship(
-        "ScanSessionDB",
+    # One room can have many active_room assignments (one per node)
+    active_assignments = relationship(
+        "ActiveRoomDB",
         back_populates="room",
         cascade="all, delete-orphan",
     )
 
-    # one room → many room_scan links
-    room_scans = relationship(
-        "RoomScanDB",
-        back_populates="room",
-        cascade="all, delete-orphan",
+
+class ActiveRoomDB(Base):
+    """
+    Lightweight device→room registry.
+
+    One row per ESP32 node. The ingest endpoint reads this table to
+    know which room to stamp on incoming scans. Assigning a device to
+    a new room simply UPSERTs this table — no sessions, no start/stop.
+
+    Example rows:
+      node="ESP32-LAB-01"  room_id=101   (scanning Room 101)
+      node="ESP32-LAB-02"  room_id=205   (scanning Room 205)
+      node="ESP32-LAB-03"  room_id=None  (unassigned)
+    """
+    __tablename__ = "active_room"
+
+    # The ESP32 node tag is the primary key — one row per device
+    node = Column(Text, primary_key=True)
+
+    room_id = Column(
+        Integer,
+        ForeignKey("room.id", ondelete="SET NULL"),
+        nullable=True,
     )
+
+    # When was this assignment last changed (useful for the dashboard)
+    assigned_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    room = relationship("RoomDB", back_populates="active_assignments")
 
 
 class WifiScanDB(Base):
@@ -88,7 +111,7 @@ class WifiScanDB(Base):
         server_default=func.now(),
         nullable=False,
     )
-    node = Column(Text)
+    node = Column(Text, index=True)        # which ESP32 sent this
     device_ts_ms = Column(BigInteger, index=True)
     ssid = Column(Text)
     bssid = Column(Text, index=True)
@@ -96,7 +119,7 @@ class WifiScanDB(Base):
     channel = Column(Integer)
     enc = Column(Text)
 
-    # mostly NULL for your new flow; kept for old/manual tagging
+    # Direct FK to room — stamped at ingest time from active_room lookup
     room_id = Column(
         Integer,
         ForeignKey("room.id", ondelete="SET NULL"),
@@ -105,82 +128,6 @@ class WifiScanDB(Base):
     )
 
     room = relationship("RoomDB", back_populates="scans")
-
-    # NEW: link wifi_scan → room_scan rows
-    room_scans = relationship(
-        "RoomScanDB",
-        back_populates="wifi_scan",
-        cascade="all, delete-orphan",
-    )
-
-
-class ScanSessionDB(Base):
-    __tablename__ = "scan_session"
-
-    id = Column(Integer, primary_key=True, index=True)
-    node = Column(Text, nullable=False)  # e.g. "ESP32-LAB-01"
-    room_id = Column(
-        Integer,
-        ForeignKey("room.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    started_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    ended_at = Column(DateTime(timezone=True), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
-
-    room = relationship("RoomDB", back_populates="scan_sessions")
-
-    # one session → many room_scan links
-    room_scans = relationship(
-        "RoomScanDB",
-        back_populates="session",
-        cascade="all, delete-orphan",
-    )
-
-
-class RoomScanDB(Base):
-    """
-    Physical table linking a wifi_scan row to a room + session.
-
-    One row here = "this scan was taken while scanning room X in session Y".
-    """
-
-    __tablename__ = "room_scan"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    wifi_scan_id = Column(
-        BigInteger,
-        ForeignKey("wifi_scan.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-    session_id = Column(
-        Integer,
-        ForeignKey("scan_session.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-    room_id = Column(
-        Integer,
-        ForeignKey("room.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-
-    # all these back_populates names MATCH the attributes above
-    wifi_scan = relationship("WifiScanDB", back_populates="room_scans")
-    session = relationship("ScanSessionDB", back_populates="room_scans")
-    room = relationship("RoomDB", back_populates="room_scans")
 
 
 class FloorPlanDB(Base):

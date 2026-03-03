@@ -1,16 +1,16 @@
 // app/user/page.tsx
-import { fetchBuildings, fetchScanSessions } from "@/lib/api";
+import { fetchBuildings, fetchDevices } from "@/lib/api";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function UserDashboard() {
-  const [buildings, sessions] = await Promise.all([
+  const [buildings, devices] = await Promise.all([
     fetchBuildings(),
-    fetchScanSessions(),
+    fetchDevices(),
   ]);
 
-  const activeScans = sessions.filter(s => s.is_active);
+  const activeDevices = devices.filter(d => d.is_active);
 
   return (
     <div className="page">
@@ -33,13 +33,13 @@ export default async function UserDashboard() {
         </div>
 
         <div className="metric-card metric-card-green">
-          <div className="metric-card-title">Active Scans</div>
-          <div className="metric-card-value">{activeScans.length}</div>
+          <div className="metric-card-title">Active Devices</div>
+          <div className="metric-card-value">{activeDevices.length}</div>
         </div>
 
         <div className="metric-card metric-card-purple">
-          <div className="metric-card-title">Total Sessions</div>
-          <div className="metric-card-value">{sessions.length}</div>
+          <div className="metric-card-title">Total Devices</div>
+          <div className="metric-card-value">{devices.length}</div>
         </div>
       </section>
 
@@ -74,25 +74,27 @@ export default async function UserDashboard() {
         )}
       </section>
 
-      {activeScans.length > 0 && (
+      {activeDevices.length > 0 && (
         <section style={{ marginTop: "32px" }}>
-          <h2 style={{ fontSize: "20px", fontWeight: "600", marginBottom: "16px" }}>Active Scanning Sessions</h2>
+          <h2 style={{ fontSize: "20px", fontWeight: "600", marginBottom: "16px" }}>Active Devices</h2>
           <div className="table-card">
             <table className="table">
               <thead>
                 <tr>
+                  <th>Device</th>
                   <th>Building</th>
                   <th>Room</th>
-                  <th>Started</th>
+                  <th>Assigned</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {activeScans.map(session => (
-                  <tr key={session.id}>
-                    <td>{session.building_name}</td>
-                    <td>{session.room_name}</td>
-                    <td>{new Date(session.started_at).toLocaleString()}</td>
+                {activeDevices.map(device => (
+                  <tr key={device.node}>
+                    <td>{device.node}</td>
+                    <td>{device.building_name}</td>
+                    <td>{device.room_name}</td>
+                    <td>{new Date(device.assigned_at).toLocaleString()}</td>
                     <td>
                       <span className="badge badge-success">Active</span>
                     </td>

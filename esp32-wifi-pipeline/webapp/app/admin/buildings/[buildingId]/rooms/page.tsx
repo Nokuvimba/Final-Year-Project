@@ -7,9 +7,9 @@ import Link from "next/link";
 import {
   fetchRooms,
   fetchBuildings,
-  fetchScanSessions,
-  startRoomScan,
-  stopRoomScan,
+  fetchDevices,
+  assignDeviceToRoom,
+  clearDeviceRoom,
   createRoom,
   updateRoom,
   deleteRoom,
@@ -60,10 +60,10 @@ export default function AdminRoomsPage({ params }: Props) {
       setLoading(true);
       setError(null);
 
-      const [buildings, roomList, sessions] = await Promise.all([
+      const [buildings, roomList, devices] = await Promise.all([
         fetchBuildings(),
         fetchRooms(buildingId),
-        fetchScanSessions(),
+        fetchDevices(),
       ]);
       
       const thisBuilding = buildings.find((b) => b.id === buildingId);
@@ -71,7 +71,7 @@ export default function AdminRoomsPage({ params }: Props) {
       setBuildingDescription(thisBuilding?.description ?? null);
 
       const activeByRoomId = new Set(
-        sessions.filter((s) => s.is_active).map((s) => s.room_id)
+        devices.filter((d) => d.is_active && d.room_id).map((d) => d.room_id!)
       );
 
       const withStatus: RoomWithStatus[] = roomList.map((r) => ({
@@ -82,7 +82,7 @@ export default function AdminRoomsPage({ params }: Props) {
       setRooms(withStatus);
     } catch (err) {
       console.error(err);
-      setError("Failed to load rooms or scan sessions");
+      setError("Failed to load rooms or devices");
     } finally {
       setLoading(false);
     }
@@ -93,30 +93,32 @@ export default function AdminRoomsPage({ params }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildingId]);
 
-  // -------- start / stop scan handlers --------
+  // -------- assign / clear device handlers --------
   async function handleStart(roomId: number) {
+    const deviceNode = "ESP32-LAB-01"; // Default device
     try {
       setActionRoomId(roomId);
       setError(null);
-      await startRoomScan(roomId);
+      await assignDeviceToRoom(deviceNode, roomId);
       await loadData();
     } catch (err) {
       console.error(err);
-      setError("Could not start scan for this room");
+      setError("Could not assign device to this room");
     } finally {
       setActionRoomId(null);
     }
   }
 
   async function handleStop(roomId: number) {
+    const deviceNode = "ESP32-LAB-01"; // Default device
     try {
       setActionRoomId(roomId);
       setError(null);
-      await stopRoomScan(roomId);
+      await clearDeviceRoom(deviceNode);
       await loadData();
     } catch (err) {
       console.error(err);
-      setError("Could not stop scan for this room");
+      setError("Could not clear device assignment");
     } finally {
       setActionRoomId(null);
     }
@@ -272,7 +274,7 @@ export default function AdminRoomsPage({ params }: Props) {
                       onClick={() => void handleStop(room.id)}
                       disabled={busy}
                     >
-                      {busy ? "Stopping…" : "Stop Scan"}
+                      {busy ? "Clearing…" : "Clear Device"}
                     </button>
                   ) : (
                     <button
@@ -281,7 +283,7 @@ export default function AdminRoomsPage({ params }: Props) {
                       onClick={() => void handleStart(room.id)}
                       disabled={busy}
                     >
-                      {busy ? "Starting…" : "Start Scan"}
+                      {busy ? "Assigning…" : "Assign Device"}
                     </button>
                   )}
                   <button

@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.concurrency import asynccontextmanager
+from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -14,28 +14,31 @@ from models import (
     WifiScanDB,
     BuildingDB,
     RoomDB,
-    ScanSessionDB,
-    RoomScanDB,
+    ActiveRoomDB,
     FloorPlanDB,
 )
-from schemas import BuildingCreate, BuildingUpdate, RoomCreate, RoomUpdate, FloorPlanUrlCreate, HeatmapPoint
+from schemas import (
+    BuildingCreate,
+    BuildingUpdate,
+    RoomCreate,
+    RoomUpdate,
+    FloorPlanUrlCreate,
+    HeatmapPoint,
+)
 import os
 import uuid
 
-NODE_TAG = "ESP32-LAB-01"
 
-# Lifespan – make sure tables exist
+# ── Startup ──────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
 
-app = FastAPI(title="Wi-Fi Scan API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Wi-Fi Scan API", version="1.0.0", lifespan=lifespan)
 
-# Create uploads directory
 os.makedirs("uploads/floorplans", exist_ok=True)
-
-# Serve uploaded images
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
@@ -49,237 +52,200 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Health + ingest
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
+# ── Ingest ────────────────────────────────────────────────────────────────────
+#
+# The ESP32 posts an array of scan objects here continuously.
+# We look up active_room for the sending node and stamp room_id directly
+# onto each wifi_scan row. No sessions, no join tables.
 
 @app.post("/ingest", include_in_schema=False)
 def ingest(
     scans: List[Dict[str, Any]] = Body(...),
     db: Session = Depends(get_db),
 ):
-   #  1. Store raw Wi-Fi scans in wifi_scan.
-   # 2. If there is an active scan session, also create a row in room_scan to link this scan to the current room/session. 
-         
     if not isinstance(scans, list) or not scans:
-        raise HTTPException(
-            status_code=400,
-            detail="Payload must be a non-empty array",
-        )
+        raise HTTPException(status_code=400, detail="Payload must be a non-empty array")
 
     accepted = 0
 
-    # single-device setup → one active session max
-    active_session = (
-        db.query(ScanSessionDB)
-        .filter(ScanSessionDB.is_active.is_(True))
-        .order_by(ScanSessionDB.started_at.desc())
-        .first()
-    )
+    # Cache active_room lookups within this batch (all scans share the same node)
+    room_cache: Dict[str, Optional[int]] = {}
 
     for s in scans:
-        # 1. raw scan
+        node = s.get("node")
+
+        # Look up (and cache) the assigned room for this node
+        if node not in room_cache:
+            assignment = db.query(ActiveRoomDB).filter(ActiveRoomDB.node == node).first()
+
+            # Auto-register the node as unassigned if it's new
+            if assignment is None:
+                assignment = ActiveRoomDB(node=node, room_id=None)
+                db.add(assignment)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    assignment = db.query(ActiveRoomDB).filter(ActiveRoomDB.node == node).first()
+
+            room_cache[node] = assignment.room_id if assignment else None
+
         row = WifiScanDB(
-            node=s.get("node"),
+            node=node,
             device_ts_ms=s.get("ts"),
             ssid=s.get("ssid"),
             bssid=s.get("bssid"),
             rssi=s.get("rssi"),
             channel=s.get("channel"),
             enc=s.get("enc"),
-            room_id=None,  # raw
+            room_id=room_cache.get(node),   # stamped directly — no join table needed
         )
         db.add(row)
         try:
-            db.commit()
-            db.refresh(row)
+            db.flush()
             accepted += 1
         except IntegrityError:
             db.rollback()
-            # skip room_scan if the raw scan failed
             continue
 
-        # 2. link to current room/session if there is one
-        if active_session:
-            link = RoomScanDB(
-                wifi_scan_id=row.id,
-                session_id=active_session.id,
-                room_id=active_session.room_id,
-            )
-            db.add(link)
-            try:
-                db.commit()
-            except IntegrityError:
-                db.rollback()
-
+    db.commit()
     return {"accepted": accepted, "total": len(scans)}
 
 
-# Scan sessions (start / stop for a room)
+# ── Device Management (active_room) ──────────────────────────────────────────
+#
+# These three endpoints replace the old start-scan / stop-scan / sessions flow.
 
-@app.post("/rooms/{room_id}/start-scan")
-def start_scan_in_room(
-    room_id: int,
-    db: Session = Depends(get_db),
-):
-    room = db.get(RoomDB, room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-
-    # single-device setup → close any existing active sessions
-    db.query(ScanSessionDB).filter(
-        ScanSessionDB.is_active.is_(True)
-    ).update(
-        {"is_active": False, "ended_at": func.now()}
-    )
-
-    session = ScanSessionDB(node=NODE_TAG, room_id=room_id)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+@app.get("/devices")
+def list_devices(db: Session = Depends(get_db)):
+    """
+    Returns all known ESP32 nodes with their current room assignment.
+    A node appears here the moment it sends its first /ingest payload.
+    """
+    devices = db.query(ActiveRoomDB).order_by(ActiveRoomDB.node).all()
 
     return {
-        "message": "Scan session started",
-        "session_id": session.id,
-        "room_id": room_id,
-    }
-
-
-@app.post("/rooms/{room_id}/stop-scan")
-def stop_scan_in_room(
-    room_id: int,
-    db: Session = Depends(get_db),
-):
-    session = (
-        db.query(ScanSessionDB)
-        .filter(
-            ScanSessionDB.room_id == room_id,
-            ScanSessionDB.is_active.is_(True),
-        )
-        .order_by(ScanSessionDB.started_at.desc())
-        .first()
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="Active session not found")
-
-    session.is_active = False
-    session.ended_at = func.now()
-    db.commit()
-
-    return {
-        "message": "Scan session stopped",
-        "session_id": session.id,
-        "room_id": room_id,
-    }
-
-
-
-# Raw recent scans (global)
-
-@app.get("/wifi/rawScans")
-def rawScans(
-    limit: int = Query(25, ge=1, le=500),
-    db: Session = Depends(get_db),
-):
-    rows = (
-        db.query(WifiScanDB)
-        .order_by(WifiScanDB.id.desc())
-        .limit(limit)
-        .all()
-    )
-
-    result = []
-    for r in rows:
-        room = r.room  # may be None (older manually-tagged data)
-        building = room.building if room else None
-
-        result.append(
+        "devices": [
             {
-                "id": r.id,
-                "received_at": r.received_at,
-                "node": r.node,
-                "ssid": r.ssid,
-                "bssid": r.bssid,
-                "rssi": r.rssi,
-                "channel": r.channel,
-                "enc": r.enc,
-                "room_id": r.room_id,
-                "room_name": room.name if room else None,
-                "building_id": building.id if building else None,
-                "building_name": building.name if building else None,
+                "node": d.node,
+                "room_id": d.room_id,
+                "room_name": d.room.name if d.room else None,
+                "building_id": d.room.building_id if d.room else None,
+                "building_name": d.room.building.name if d.room else None,
+                "assigned_at": d.assigned_at,
+                "is_active": d.room_id is not None,
             }
-        )
-
-    return {"rows": result}
-
-
-# Buildings
-
-@app.post("/buildings")
-def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
-    name = payload.name
-    if not name:
-        raise HTTPException(status_code=400, detail="Field 'name' is required")
-
-    description = payload.description
-
-    existing = db.query(BuildingDB).filter(BuildingDB.name == name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Building name already exists")
-
-    b = BuildingDB(name=name, description=description)
-    db.add(b)
-    db.commit()
-    db.refresh(b)
-
-    return {
-        "building": {
-            "id": b.id,
-            "name": b.name,
-            "description": b.description,
-        }
-    }
-
-
-@app.get("/buildings")
-def list_buildings(db: Session = Depends(get_db)):
-    rows = db.query(BuildingDB).order_by(BuildingDB.name).all()
-    return {
-        "buildings": [
-            {"id": b.id, "name": b.name, "description": b.description}
-            for b in rows
+            for d in devices
         ]
     }
 
 
-@app.get("/buildings/{building_id}")
-def get_building(
-    building_id: int,
+@app.post("/devices/{node}/assign-room/{room_id}")
+def assign_room_to_device(
+    node: str,
+    room_id: int,
     db: Session = Depends(get_db),
 ):
+    """
+    Assign an ESP32 node to a room.
+    All scans from this node will be tagged with room_id until changed.
+    Creates the device record if it doesn't exist yet.
+    """
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    assignment = db.query(ActiveRoomDB).filter(ActiveRoomDB.node == node).first()
+    if assignment:
+        assignment.room_id = room_id
+    else:
+        assignment = ActiveRoomDB(node=node, room_id=room_id)
+        db.add(assignment)
+
+    db.commit()
+    db.refresh(assignment)
+
+    return {
+        "node": assignment.node,
+        "room_id": assignment.room_id,
+        "room_name": room.name,
+        "building_name": room.building.name,
+        "assigned_at": assignment.assigned_at,
+    }
+
+
+@app.post("/devices/{node}/clear-room")
+def clear_room_from_device(
+    node: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Unassign a device from its current room.
+    Subsequent scans from this node will have room_id = NULL.
+    """
+    assignment = db.query(ActiveRoomDB).filter(ActiveRoomDB.node == node).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    assignment.room_id = None
+    db.commit()
+
+    return {"node": node, "room_id": None, "message": "Device unassigned"}
+
+
+# ── Buildings ─────────────────────────────────────────────────────────────────
+
+@app.get("/buildings")
+def list_buildings(db: Session = Depends(get_db)):
+    buildings = db.query(BuildingDB).order_by(BuildingDB.name).all()
+    return {
+        "buildings": [
+            {"id": b.id, "name": b.name, "description": b.description}
+            for b in buildings
+        ]
+    }
+
+
+@app.post("/buildings")
+def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
+    existing = db.query(BuildingDB).filter(BuildingDB.name == payload.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Building name already exists")
+
+    b = BuildingDB(name=payload.name, description=payload.description)
+    db.add(b)
+    db.commit()
+    db.refresh(b)
+    return {"building": {"id": b.id, "name": b.name, "description": b.description}}
+
+
+@app.get("/buildings/{building_id}")
+def get_building(building_id: int, db: Session = Depends(get_db)):
     building = db.get(BuildingDB, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
-    
+
     return {
-        "building": {
-            "id": building.id,
-            "name": building.name,
-            "description": building.description,
-        },
+        "building": {"id": building.id, "name": building.name, "description": building.description},
         "rooms": [
             {
-                "id": room.id,
-                "name": room.name,
-                "floor": room.floor,
-                "room_type": room.room_type,
-                "x": room.x,
-                "y": room.y,
-                "floorplan_id": room.floorplan_id,
+                "id": r.id,
+                "name": r.name,
+                "floor": r.floor,
+                "room_type": r.room_type,
+                "x": r.x,
+                "y": r.y,
+                "floorplan_id": r.floorplan_id,
             }
-            for room in building.rooms
+            for r in building.rooms
         ],
         "floorplans": [
             {
@@ -289,24 +255,19 @@ def get_building(
                 "created_at": fp.created_at,
             }
             for fp in building.floorplans
-        ]
+        ],
     }
 
 
 @app.put("/buildings/{building_id}")
-def update_building(
-    building_id: int,
-    payload: BuildingUpdate,
-    db: Session = Depends(get_db),
-):
+def update_building(building_id: int, payload: BuildingUpdate, db: Session = Depends(get_db)):
     building = db.get(BuildingDB, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
 
     if payload.name is not None:
         existing = db.query(BuildingDB).filter(
-            BuildingDB.name == payload.name,
-            BuildingDB.id != building_id
+            BuildingDB.name == payload.name, BuildingDB.id != building_id
         ).first()
         if existing:
             raise HTTPException(status_code=400, detail="Building name already exists")
@@ -317,28 +278,16 @@ def update_building(
 
     db.commit()
     db.refresh(building)
-
-    return {
-        "building": {
-            "id": building.id,
-            "name": building.name,
-            "description": building.description,
-        }
-    }
+    return {"building": {"id": building.id, "name": building.name, "description": building.description}}
 
 
 @app.delete("/buildings/{building_id}")
-def delete_building(
-    building_id: int,
-    db: Session = Depends(get_db),
-):
+def delete_building(building_id: int, db: Session = Depends(get_db)):
     building = db.get(BuildingDB, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
-
     db.delete(building)
     db.commit()
-
     return {"message": "Building deleted successfully"}
 
 
@@ -352,11 +301,9 @@ def recent_scans_for_building(
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
 
-    # wifi_scan -> room_scan -> room, filter by building
     rows = (
         db.query(WifiScanDB, RoomDB)
-        .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
-        .join(RoomDB, RoomScanDB.room_id == RoomDB.id)
+        .join(RoomDB, WifiScanDB.room_id == RoomDB.id)
         .filter(RoomDB.building_id == building_id)
         .order_by(WifiScanDB.id.desc())
         .limit(limit)
@@ -364,11 +311,7 @@ def recent_scans_for_building(
     )
 
     return {
-        "building": {
-            "id": building.id,
-            "name": building.name,
-            "description": building.description,
-        },
+        "building": {"id": building.id, "name": building.name, "description": building.description},
         "rows": [
             {
                 "id": scan.id,
@@ -387,45 +330,27 @@ def recent_scans_for_building(
     }
 
 
-# Rooms
+# ── Rooms ─────────────────────────────────────────────────────────────────────
 
 @app.post("/rooms")
 def create_room(payload: RoomCreate, db: Session = Depends(get_db)):
-    name = payload.name
-    building_id = payload.building_id
+    if not payload.name or payload.building_id is None:
+        raise HTTPException(status_code=400, detail="Fields 'name' and 'building_id' are required")
 
-    if not name or building_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Fields 'name' and 'building_id' are required",
-        )
-
-    floor = payload.floor
-    room_type = payload.room_type
-
-    building = db.query(BuildingDB).filter(BuildingDB.id == building_id).first()
+    building = db.get(BuildingDB, payload.building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
 
     r = RoomDB(
-        name=name,
-        building_id=building_id,
-        floor=floor,
-        room_type=room_type,
+        name=payload.name,
+        building_id=payload.building_id,
+        floor=payload.floor,
+        room_type=payload.room_type,
     )
     db.add(r)
     db.commit()
     db.refresh(r)
-
-    return {
-        "room": {
-            "id": r.id,
-            "name": r.name,
-            "building_id": r.building_id,
-            "floor": r.floor,
-            "room_type": r.room_type,
-        }
-    }
+    return {"room": {"id": r.id, "name": r.name, "building_id": r.building_id, "floor": r.floor, "room_type": r.room_type}}
 
 
 @app.get("/rooms")
@@ -434,12 +359,10 @@ def list_rooms(
     db: Session = Depends(get_db),
 ):
     q = db.query(RoomDB).join(BuildingDB)
-
     if building_id is not None:
         q = q.filter(RoomDB.building_id == building_id)
 
     rows = q.order_by(BuildingDB.name, RoomDB.name).all()
-
     return {
         "rooms": [
             {
@@ -459,18 +382,13 @@ def list_rooms(
 
 
 @app.put("/rooms/{room_id}")
-def update_room(
-    room_id: int,
-    payload: RoomUpdate,
-    db: Session = Depends(get_db),
-):
+def update_room(room_id: int, payload: RoomUpdate, db: Session = Depends(get_db)):
     room = db.get(RoomDB, room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
     if payload.building_id is not None:
-        building = db.get(BuildingDB, payload.building_id)
-        if not building:
+        if not db.get(BuildingDB, payload.building_id):
             raise HTTPException(status_code=404, detail="Building not found")
         room.building_id = payload.building_id
 
@@ -483,30 +401,16 @@ def update_room(
 
     db.commit()
     db.refresh(room)
-
-    return {
-        "room": {
-            "id": room.id,
-            "name": room.name,
-            "building_id": room.building_id,
-            "floor": room.floor,
-            "room_type": room.room_type,
-        }
-    }
+    return {"room": {"id": room.id, "name": room.name, "building_id": room.building_id, "floor": room.floor, "room_type": room.room_type}}
 
 
 @app.delete("/rooms/{room_id}")
-def delete_room(
-    room_id: int,
-    db: Session = Depends(get_db),
-):
+def delete_room(room_id: int, db: Session = Depends(get_db)):
     room = db.get(RoomDB, room_id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-
     db.delete(room)
     db.commit()
-
     return {"message": "Room deleted successfully"}
 
 
@@ -520,11 +424,9 @@ def recent_scans_for_room(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # use the physical mapping table room_scan
     rows = (
         db.query(WifiScanDB)
-        .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
-        .filter(RoomScanDB.room_id == room_id)
+        .filter(WifiScanDB.room_id == room_id)
         .order_by(WifiScanDB.id.desc())
         .limit(limit)
         .all()
@@ -556,39 +458,71 @@ def recent_scans_for_room(
     }
 
 
-# Sessions listing (admin)
-
-@app.get("/sessions")
-def list_sessions(
+@app.put("/rooms/{room_id}/position")
+def update_room_position(
+    room_id: int,
+    floorplan_id: int = Body(...),
+    x: float = Body(...),
+    y: float = Body(...),
     db: Session = Depends(get_db),
 ):
-    sessions = (
-        db.query(ScanSessionDB)
-        .join(RoomDB, ScanSessionDB.room_id == RoomDB.id)
-        .join(BuildingDB, RoomDB.building_id == BuildingDB.id)
-        .order_by(ScanSessionDB.id.desc())
+    room = db.get(RoomDB, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    floorplan = db.get(FloorPlanDB, floorplan_id)
+    if not floorplan:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+
+    if floorplan.building_id != room.building_id:
+        raise HTTPException(status_code=400, detail="Floor plan must belong to the same building as the room")
+
+    if not (0 <= x <= 1) or not (0 <= y <= 1):
+        raise HTTPException(status_code=400, detail="Coordinates must be between 0 and 1")
+
+    room.floorplan_id = floorplan_id
+    room.x = x
+    room.y = y
+    db.commit()
+    db.refresh(room)
+
+    return {"room": {"id": room.id, "name": room.name, "floorplan_id": room.floorplan_id, "x": room.x, "y": room.y}}
+
+
+# ── Raw WiFi scans ─────────────────────────────────────────────────────────────
+
+@app.get("/wifi/rawScans")
+def list_raw_scans(
+    limit: int = Query(25, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(WifiScanDB)
+        .order_by(WifiScanDB.id.desc())
+        .limit(limit)
         .all()
     )
-
     return {
-        "sessions": [
+        "rows": [
             {
-                "id": s.id,
-                "node": s.node,
-                "room_id": s.room_id,
-                "room_name": s.room.name,
-                "building_id": s.room.building_id,
-                "building_name": s.room.building.name,
-                "started_at": s.started_at,
-                "ended_at": s.ended_at,
-                "is_active": s.is_active,
+                "id": r.id,
+                "received_at": r.received_at,
+                "node": r.node,
+                "ssid": r.ssid,
+                "bssid": r.bssid,
+                "rssi": r.rssi,
+                "channel": r.channel,
+                "enc": r.enc,
+                "room_id": r.room_id,
+                "room_name": r.room.name if r.room else None,
+                "building_name": r.room.building.name if r.room else None,
             }
-            for s in sessions
+            for r in rows
         ]
     }
 
 
-# Floor Plans
+# ── Floor Plans ───────────────────────────────────────────────────────────────
 
 @app.post("/floorplans")
 def create_floorplan(
@@ -597,41 +531,36 @@ def create_floorplan(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    # Validate building exists
     building = db.get(BuildingDB, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
-    
-    # Validate file type
+
     if not file.content_type or not file.content_type.startswith(("image/png", "image/jpeg")):
         raise HTTPException(status_code=400, detail="File must be PNG or JPEG")
-    
-    # Check for existing floor plan
+
     existing = db.query(FloorPlanDB).filter(
         FloorPlanDB.building_id == building_id,
-        FloorPlanDB.floor_name == floor_name
+        FloorPlanDB.floor_name == floor_name,
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
-    
-    # Save file
+
     file_ext = ".png" if file.content_type == "image/png" else ".jpg"
     filename = f"{uuid.uuid4()}{file_ext}"
     file_path = f"uploads/floorplans/{filename}"
-    
+
     with open(file_path, "wb") as f:
         f.write(file.file.read())
-    
-    # Create floor plan record
+
     floorplan = FloorPlanDB(
         building_id=building_id,
         floor_name=floor_name,
-        image_url=f"/uploads/floorplans/{filename}"
+        image_url=f"/uploads/floorplans/{filename}",
     )
     db.add(floorplan)
     db.commit()
     db.refresh(floorplan)
-    
+
     return {
         "floorplan": {
             "id": floorplan.id,
@@ -644,37 +573,20 @@ def create_floorplan(
 
 
 @app.post("/floorplans/url")
-def create_floorplan_from_url(
-    payload: FloorPlanUrlCreate,
-    db: Session = Depends(get_db),
-):
-    # Validate building exists
+def create_floorplan_from_url(payload: FloorPlanUrlCreate, db: Session = Depends(get_db)):
     building = db.get(BuildingDB, payload.building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
-    
-    # Check for existing floor plan
-    existing = db.query(FloorPlanDB).filter(
-        FloorPlanDB.building_id == payload.building_id,
-        FloorPlanDB.floor_name == payload.floor_name
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
-    
-    # Validate image URL
-    if not payload.image_url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Image URL must start with http:// or https://")
-    
-    # Create floor plan record
+
     floorplan = FloorPlanDB(
         building_id=payload.building_id,
         floor_name=payload.floor_name,
-        image_url=payload.image_url
+        image_url=payload.image_url,
     )
     db.add(floorplan)
     db.commit()
     db.refresh(floorplan)
-    
+
     return {
         "floorplan": {
             "id": floorplan.id,
@@ -686,37 +598,43 @@ def create_floorplan_from_url(
     }
 
 
+@app.get("/buildings/{building_id}/floorplans")
+def get_building_floorplans(building_id: int, db: Session = Depends(get_db)):
+    building = db.get(BuildingDB, building_id)
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found")
+
+    floorplans = (
+        db.query(FloorPlanDB)
+        .filter(FloorPlanDB.building_id == building_id)
+        .order_by(FloorPlanDB.floor_name)
+        .all()
+    )
+
+    return {
+        "building": {"id": building.id, "name": building.name},
+        "floorplans": [
+            {"id": fp.id, "floor_name": fp.floor_name, "image_url": fp.image_url, "created_at": fp.created_at}
+            for fp in floorplans
+        ],
+    }
+
+
 @app.put("/floorplans/{floorplan_id}")
 def update_floorplan(
     floorplan_id: int,
     payload: FloorPlanUrlCreate,
     db: Session = Depends(get_db),
 ):
-    floorplan = db.get(FloorPlanDB, floorplan_id) #Get existing floor plan
+    floorplan = db.get(FloorPlanDB, floorplan_id)
     if not floorplan:
         raise HTTPException(status_code=404, detail="Floor plan not found")
-    
-    # Check for existing floor plan with same name (excluding current one)
-    existing = db.query(FloorPlanDB).filter(
-        FloorPlanDB.building_id == payload.building_id,
-        FloorPlanDB.floor_name == payload.floor_name,
-        FloorPlanDB.id != floorplan_id 
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Floor plan already exists for this building and floor")
-    
-    # Validate image URL if provided
-    if payload.image_url and not payload.image_url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Image URL must start with http:// or https://")
-    
-    # Update floor plan
+
     floorplan.floor_name = payload.floor_name
-    if payload.image_url:
-        floorplan.image_url = payload.image_url
-    
+    floorplan.image_url = payload.image_url
     db.commit()
     db.refresh(floorplan)
-    
+
     return {
         "floorplan": {
             "id": floorplan.id,
@@ -729,105 +647,24 @@ def update_floorplan(
 
 
 @app.delete("/floorplans/{floorplan_id}")
-def delete_floorplan(
-    floorplan_id: int, # Floor plan ID to delete
-    db: Session = Depends(get_db), 
-):
-    floorplan = db.get(FloorPlanDB, floorplan_id) #Get existing floor plan
-    if not floorplan:
-        raise HTTPException(status_code=404, detail="Floor plan not found")
-    
-    # Delete associated file if it's a local upload
-    if floorplan.image_url.startswith("/uploads/"):
-        file_path = floorplan.image_url[1:]  # Remove leading slash
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    
-    db.delete(floorplan)
-    db.commit()
-    
-    return {"message": "Floor plan deleted successfully"}
-
-
-@app.get("/buildings/{building_id}/floorplans")
-def get_building_floorplans(
-    building_id: int,
-    db: Session = Depends(get_db),
-):
-    building = db.get(BuildingDB, building_id)
-    if not building:
-        raise HTTPException(status_code=404, detail="Building not found")
-    
-    floorplans = db.query(FloorPlanDB).filter(
-        FloorPlanDB.building_id == building_id
-    ).order_by(FloorPlanDB.floor_name).all()
-    
-    return {
-        "building": {
-            "id": building.id,
-            "name": building.name,
-        },
-        "floorplans": [
-            {
-                "id": fp.id,
-                "floor_name": fp.floor_name,
-                "image_url": fp.image_url,
-                "created_at": fp.created_at,
-            }
-            for fp in floorplans
-        ]
-    }
-
-
-@app.put("/rooms/{room_id}/position")
-def update_room_position(
-    room_id: int,
-    floorplan_id: int = Body(...),
-    x: float = Body(...),
-    y: float = Body(...),
-    db: Session = Depends(get_db),
-):
-    # Validate room exists
-    room = db.get(RoomDB, room_id)
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-    
-    # Validate floorplan exists
+def delete_floorplan(floorplan_id: int, db: Session = Depends(get_db)):
     floorplan = db.get(FloorPlanDB, floorplan_id)
     if not floorplan:
         raise HTTPException(status_code=404, detail="Floor plan not found")
-    
-    # Validate floorplan belongs to same building as room
-    if floorplan.building_id != room.building_id:
-        raise HTTPException(status_code=400, detail="Floor plan must belong to the same building as the room")
-    
-    # Validate coordinates are between 0 and 1
-    if not (0 <= x <= 1) or not (0 <= y <= 1):
-        raise HTTPException(status_code=400, detail="Coordinates must be between 0 and 1")
-    
-    # Update room position
-    room.floorplan_id = floorplan_id
-    room.x = x
-    room.y = y
+
+    if floorplan.image_url.startswith("/uploads/"):
+        file_path = floorplan.image_url[1:]
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    db.delete(floorplan)
     db.commit()
-    db.refresh(room)
-    
-    return {
-        "room": {
-            "id": room.id,
-            "name": room.name,
-            "floorplan_id": room.floorplan_id,
-            "x": room.x,
-            "y": room.y,
-        }
-    }
+    return {"message": "Floor plan deleted successfully"}
 
 
-
-# Heatmap endpoints
+# ── Heatmap ───────────────────────────────────────────────────────────────────
 
 def compute_signal_level(avg_rssi: Optional[float]) -> Optional[str]:
-    """Computing signal strength level from average RSSI"""
     if avg_rssi is None:
         return None
     if avg_rssi >= -50:
@@ -843,27 +680,16 @@ def compute_signal_level(avg_rssi: Optional[float]) -> Optional[str]:
 @app.get("/heatmap/floorplan/{floorplan_id}", response_model=List[HeatmapPoint])
 def get_floorplan_heatmap(
     floorplan_id: int,
-    session_id: int = Query(...),
     db: Session = Depends(get_db),
 ):
-    # Validate floorplan exists
+    """
+    Returns average RSSI per room for all rooms on this floor plan.
+    No session_id needed — just query wifi_scan directly via room_id.
+    """
     floorplan = db.get(FloorPlanDB, floorplan_id)
     if not floorplan:
         raise HTTPException(status_code=404, detail="Floor plan not found")
-    
-    # Validate session exists
-    session = db.get(ScanSessionDB, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Scan session not found")
-    
-    # Validate session's room belongs to the same floorplan
-    if session.room.floorplan_id != floorplan_id:
-        raise HTTPException(
-            status_code=400, 
-            detail="Session's room does not belong to this floor plan"
-        )
-    
-    # Query aggregation: get avg RSSI and sample count for the session's room
+
     result = (
         db.query(
             RoomDB.id,
@@ -871,96 +697,23 @@ def get_floorplan_heatmap(
             RoomDB.x,
             RoomDB.y,
             func.avg(WifiScanDB.rssi).label("avg_rssi"),
-            func.count(WifiScanDB.id).label("samples")
+            func.count(WifiScanDB.id).label("samples"),
         )
-        .join(RoomScanDB, RoomScanDB.room_id == RoomDB.id)
-        .join(WifiScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
-        .filter(RoomScanDB.session_id == session_id)
+        .join(WifiScanDB, WifiScanDB.room_id == RoomDB.id)
+        .filter(RoomDB.floorplan_id == floorplan_id)
         .group_by(RoomDB.id, RoomDB.name, RoomDB.x, RoomDB.y)
         .all()
     )
-    
-    heatmap_data = []
-    for row in result:
-        avg_rssi = float(row.avg_rssi) if row.avg_rssi is not None else None
-        heatmap_data.append(
-            HeatmapPoint(
-                room_id=row.id,
-                room_name=row.name,
-                x=row.x,
-                y=row.y,
-                avg_rssi=avg_rssi,
-                level=compute_signal_level(avg_rssi),
-                samples=row.samples
-            )
-        )
-    
-    return heatmap_data
 
-
-@app.get("/heatmap/floorplan/{floorplan_id}/latest", response_model=List[HeatmapPoint])
-def get_floorplan_heatmap_latest(
-    floorplan_id: int,
-    db: Session = Depends(get_db),
-):
-    # Validate floorplan exists
-    floorplan = db.get(FloorPlanDB, floorplan_id)
-    if not floorplan:
-        raise HTTPException(status_code=404, detail="Floor plan not found")
-    
-    # Get all rooms on this floorplan
-    rooms = db.query(RoomDB).filter(RoomDB.floorplan_id == floorplan_id).all()
-    
-    heatmap_data = []
-    
-    for room in rooms:
-        # Find the most recent session for this room
-        latest_session = (
-            db.query(ScanSessionDB)
-            .filter(ScanSessionDB.room_id == room.id)
-            .order_by(ScanSessionDB.started_at.desc())
-            .first()
+    return [
+        HeatmapPoint(
+            room_id=row.id,
+            room_name=row.name,
+            x=row.x,
+            y=row.y,
+            avg_rssi=float(row.avg_rssi) if row.avg_rssi is not None else None,
+            level=compute_signal_level(float(row.avg_rssi) if row.avg_rssi else None),
+            samples=row.samples,
         )
-        
-        if not latest_session:
-            # No session for this room, include with null values
-            heatmap_data.append(
-                HeatmapPoint(
-                    room_id=room.id,
-                    room_name=room.name,
-                    x=room.x,
-                    y=room.y,
-                    avg_rssi=None,
-                    level=None,
-                    samples=0
-                )
-            )
-            continue
-        
-        # Get aggregated data for this session
-        result = (
-            db.query(
-                func.avg(WifiScanDB.rssi).label("avg_rssi"),
-                func.count(WifiScanDB.id).label("samples")
-            )
-            .join(RoomScanDB, RoomScanDB.wifi_scan_id == WifiScanDB.id)
-            .filter(RoomScanDB.session_id == latest_session.id)
-            .first()
-        )
-        
-        avg_rssi = float(result.avg_rssi) if result.avg_rssi is not None else None
-        samples = result.samples if result.samples else 0
-        
-        heatmap_data.append(
-            HeatmapPoint(
-                room_id=room.id,
-                room_name=room.name,
-                x=room.x,
-                y=room.y,
-                avg_rssi=avg_rssi,
-                level=compute_signal_level(avg_rssi),
-                samples=samples
-            )
-        )
-    
-    return heatmap_data
+        for row in result
+    ]

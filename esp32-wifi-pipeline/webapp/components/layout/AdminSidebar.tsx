@@ -15,7 +15,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/admin", icon: "📊" },
   { label: "Buildings", href: "/admin/buildings", icon: "🏢" },
-  { label: "Scan Sessions", href: "/admin/sessions", icon: "📡" },
+  { label: "Device Scanner", href: "/admin/scanning", icon: "📡" },
   { label: "Raw Wi-Fi Scans", href: "/admin/raw-wifi-scans", icon: "📶" },
 ];
 

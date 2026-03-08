@@ -1,8 +1,6 @@
 // lib/api.ts
-// Central API client for the Wi-Fi Indoor Mapping backend
 
 const isServer = typeof window === "undefined";
-
 const API_BASE = isServer
   ? `${process.env.NEXT_PUBLIC_SITE_URL}/api`
   : "/api";
@@ -25,41 +23,39 @@ export type Room = {
   id: number;
   name: string;
   building_id: number;
-  building_name: string;
   floor: string | null;
   room_type: string | null;
-  floorplan_id: number | null;
-  x: number | null;
-  y: number | null;
-};
-
-export type WifiScan = {
-  id: number;
-  received_at: string;
-  node: string | null;
-  ssid: string | null;
-  bssid: string | null;
-  rssi: number | null;
-  channel: number | null;
-  enc: string | null;
-  room_id: number | null;
-  room_name?: string | null;
-  building_id?: number | null;
-  building_name?: string | null;
 };
 
 /**
- * Represents one ESP32 device and its current room assignment.
- * Replaces the old ScanSession type.
+ * A physical coordinate on a floor plan where an ESP32 sits.
+ * label is display-only — has no connection to the Room table.
+ */
+export type ScanPoint = {
+  id: number;
+  floorplan_id: number;
+  x: number;                   // 0.0 – 1.0
+  y: number;                   // 0.0 – 1.0
+  label: string | null;        // e.g. "Near window", "Lab bench 3"
+  created_at: string;
+  scan_count: number;          // how many wifi_scans are tagged to this point
+  assigned_node: string | null; // which ESP32 is currently here (if any)
+  is_active: boolean;
+};
+
+/**
+ * An ESP32 device and the scan_point it is currently assigned to.
+ * Replaces the old Device type which pointed to a room.
  */
 export type Device = {
-  node: string;              // e.g. "ESP32-LAB-01"
-  room_id: number | null;
-  room_name: string | null;
-  building_id: number | null;
-  building_name: string | null;
+  node: string;
+  scan_point_id: number | null;
+  label: string | null;
+  x: number | null;
+  y: number | null;
+  floorplan_id: number | null;
   assigned_at: string;
-  is_active: boolean;        // true if room_id is not null
+  is_active: boolean;
 };
 
 export type FloorPlan = {
@@ -76,13 +72,28 @@ export type BuildingFloorPlans = {
 };
 
 export type HeatmapPoint = {
-  room_id: number;
-  room_name: string;
+  room_id: number;             // actually scan_point.id
+  room_name: string;           // scan_point.label or "Point {id}"
   x: number | null;
   y: number | null;
   avg_rssi: number | null;
   level: "strong" | "medium" | "low" | "weak" | null;
   samples: number;
+};
+
+export type WifiScan = {
+  id: number;
+  received_at: string;
+  node: string | null;
+  ssid: string | null;
+  bssid: string | null;
+  rssi: number | null;
+  channel: number | null;
+  enc: string | null;
+  scan_point_id: number | null;
+  label: string | null;
+  x: number | null;
+  y: number | null;
 };
 
 export type RoomWifiRow = {
@@ -94,25 +105,18 @@ export type RoomWifiRow = {
   rssi: number | null;
   channel: number | null;
   enc: string | null;
-  room_id: number;
+  scan_point_id: number | null;
 };
 
-export type BuildingWifiRow = RoomWifiRow & { room_name: string };
-
 export type RoomScanData = {
-  room: {
-    id: number;
-    name: string;
-    floor: string | null;
-    room_type: string | null;
-    building_id: number;
-    building_name: string;
-  };
+  room: { id: number; name: string; floor: string | null; room_type: string | null; building_id: number; building_name: string };
   rows: RoomWifiRow[];
 };
 
+export type BuildingWifiRow = WifiScan & { room_name?: string };
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+
+// ── HTTP helper ────────────────────────────────────────────────────────────────
 
 async function handleJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -131,9 +135,7 @@ export async function fetchBuildings(): Promise<Building[]> {
   return data.buildings ?? [];
 }
 
-export async function createBuilding(
-  payload: { name: string; description?: string }
-): Promise<Building> {
+export async function createBuilding(payload: { name: string; description?: string }): Promise<Building> {
   const res = await fetch(`${API_BASE}/buildings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -143,10 +145,7 @@ export async function createBuilding(
   return data.building;
 }
 
-export async function updateBuilding(
-  id: number,
-  payload: { name?: string; description?: string }
-): Promise<Building> {
+export async function updateBuilding(id: number, payload: { name?: string; description?: string }): Promise<Building> {
   const res = await fetch(`${API_BASE}/buildings/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -157,28 +156,19 @@ export async function updateBuilding(
 }
 
 export async function deleteBuilding(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/buildings/${id}`, { method: "DELETE" });
-  await handleJson(res);
+  await handleJson(await fetch(`${API_BASE}/buildings/${id}`, { method: "DELETE" }));
 }
 
 
-// ── Rooms ──────────────────────────────────────────────────────────────────────
+// ── Rooms (organisational only) ────────────────────────────────────────────────
 
 export async function fetchRooms(buildingId?: number): Promise<Room[]> {
-  const url = buildingId
-    ? `${API_BASE}/rooms?building_id=${buildingId}`
-    : `${API_BASE}/rooms`;
-  const res = await fetch(url, { cache: "no-store" });
-  const data = await handleJson<{ rooms: Room[] }>(res);
+  const url = buildingId ? `${API_BASE}/rooms?building_id=${buildingId}` : `${API_BASE}/rooms`;
+  const data = await handleJson<{ rooms: Room[] }>(await fetch(url, { cache: "no-store" }));
   return data.rooms ?? [];
 }
 
-export async function createRoom(payload: {
-  name: string;
-  building_id: number;
-  floor?: string;
-  room_type?: string;
-}): Promise<Room> {
+export async function createRoom(payload: { name: string; building_id: number; floor?: string; room_type?: string }): Promise<Room> {
   const res = await fetch(`${API_BASE}/rooms`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -188,10 +178,7 @@ export async function createRoom(payload: {
   return data.room;
 }
 
-export async function updateRoom(
-  id: number,
-  payload: { name?: string; floor?: string; room_type?: string }
-): Promise<Room> {
+export async function updateRoom(id: number, payload: { name?: string; floor?: string; room_type?: string }): Promise<Room> {
   const res = await fetch(`${API_BASE}/rooms/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -202,58 +189,71 @@ export async function updateRoom(
 }
 
 export async function deleteRoom(id: number): Promise<void> {
-  const res = await fetch(`${API_BASE}/rooms/${id}`, { method: "DELETE" });
-  await handleJson(res);
+  await handleJson(await fetch(`${API_BASE}/rooms/${id}`, { method: "DELETE" }));
 }
 
-export async function updateRoomPosition(
-  roomId: number,
+
+// ── Scan Points ────────────────────────────────────────────────────────────────
+
+export async function fetchScanPoints(floorplanId: number): Promise<ScanPoint[]> {
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}/scan-points`, { cache: "no-store" });
+  const data = await handleJson<{ scan_points: ScanPoint[] }>(res);
+  return data.scan_points ?? [];
+}
+
+export async function createScanPoint(
   floorplanId: number,
   x: number,
-  y: number
-): Promise<void> {
-  const res = await fetch(`${API_BASE}/rooms/${roomId}/position`, {
+  y: number,
+  label?: string
+): Promise<ScanPoint> {
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}/scan-points`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ x, y, label: label ?? null }),
+  });
+  const data = await handleJson<{ scan_point: ScanPoint }>(res);
+  return data.scan_point;
+}
+
+export async function updateScanPoint(
+  pointId: number,
+  payload: { label?: string; x?: number; y?: number }
+): Promise<ScanPoint> {
+  const res = await fetch(`${API_BASE}/scan-points/${pointId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ floorplan_id: floorplanId, x, y }),
+    body: JSON.stringify(payload),
   });
-  await handleJson(res);
+  const data = await handleJson<{ scan_point: ScanPoint }>(res);
+  return data.scan_point;
+}
+
+export async function deleteScanPoint(pointId: number): Promise<void> {
+  await handleJson(await fetch(`${API_BASE}/scan-points/${pointId}`, { method: "DELETE" }));
 }
 
 
-// ── Device management (replaces scan sessions) ─────────────────────────────────
+// ── Devices ────────────────────────────────────────────────────────────────────
 
-/**
- * Get all known ESP32 devices and their current room assignments.
- */
 export async function fetchDevices(): Promise<Device[]> {
   const res = await fetch(`${API_BASE}/devices`, { cache: "no-store" });
   const data = await handleJson<{ devices: Device[] }>(res);
   return data.devices ?? [];
 }
 
-/**
- * Assign an ESP32 node to a room.
- * All scans from this node will be tagged with this room until changed.
- */
-export async function assignDeviceToRoom(
-  node: string,
-  roomId: number
-): Promise<Device> {
-  const res = await fetch(`${API_BASE}/devices/${encodeURIComponent(node)}/assign-room/${roomId}`, {
-    method: "POST",
-  });
+export async function assignDeviceToPoint(node: string, scanPointId: number): Promise<Device> {
+  const res = await fetch(
+    `${API_BASE}/devices/${encodeURIComponent(node)}/assign-point/${scanPointId}`,
+    { method: "POST" }
+  );
   return handleJson<Device>(res);
 }
 
-/**
- * Unassign a device — subsequent scans will have room_id = null.
- */
-export async function clearDeviceRoom(node: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/devices/${encodeURIComponent(node)}/clear-room`, {
-    method: "POST",
-  });
-  await handleJson(res);
+export async function clearDevicePoint(node: string): Promise<void> {
+  await handleJson(
+    await fetch(`${API_BASE}/devices/${encodeURIComponent(node)}/clear-point`, { method: "POST" })
+  );
 }
 
 
@@ -265,47 +265,24 @@ export async function fetchRecentScans(limit = 25): Promise<WifiScan[]> {
   return data.rows ?? [];
 }
 
-export async function fetchRoomScans(roomId: number, limit = 100): Promise<RoomScanData> {
-  const res = await fetch(`${API_BASE}/rooms/${roomId}/wifi?limit=${limit}`, { cache: "no-store" });
-  return handleJson(res);
-}
-
-export async function fetchBuildingScans(
-  buildingId: number,
-  limit = 500
-): Promise<{ building: { id: number; name: string; description: string | null }; rows: BuildingWifiRow[] }> {
-  const res = await fetch(`${API_BASE}/buildings/${buildingId}/wifi?limit=${limit}`, { cache: "no-store" });
-  return handleJson(res);
-}
-
 
 // ── Floor Plans ────────────────────────────────────────────────────────────────
 
 export async function fetchBuildingFloorPlans(buildingId: number): Promise<BuildingFloorPlans> {
-  const res = await fetch(`${API_BASE}/buildings/${buildingId}/floorplans`, { cache: "no-store" });
-  return handleJson(res);
+  return handleJson(await fetch(`${API_BASE}/buildings/${buildingId}/floorplans`, { cache: "no-store" }));
 }
 
-export async function uploadFloorPlan(
-  buildingId: number,
-  floorName: string,
-  file: File
-): Promise<FloorPlan> {
+export async function uploadFloorPlan(buildingId: number, floorName: string, file: File): Promise<FloorPlan> {
   const formData = new FormData();
   formData.append("building_id", buildingId.toString());
   formData.append("floor_name", floorName);
   formData.append("file", file);
-
   const res = await fetch(`${API_BASE}/floorplans`, { method: "POST", body: formData });
   const data = await handleJson<{ floorplan: FloorPlan }>(res);
   return data.floorplan;
 }
 
-export async function createFloorPlanFromUrl(
-  buildingId: number,
-  floorName: string,
-  imageUrl: string
-): Promise<FloorPlan> {
+export async function createFloorPlanFromUrl(buildingId: number, floorName: string, imageUrl: string): Promise<FloorPlan> {
   const res = await fetch(`${API_BASE}/floorplans/url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -315,20 +292,11 @@ export async function createFloorPlanFromUrl(
   return data.floorplan;
 }
 
-export async function updateFloorPlan(
-  floorplanId: number,
-  buildingId: number,
-  floorName: string,
-  imageUrl: string
-): Promise<FloorPlan> {
+export async function updateFloorPlan(floorplanId: number, buildingId: number, floorName: string, imageUrl: string): Promise<FloorPlan> {
   const res = await fetch(`${API_BASE}/floorplans/${floorplanId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      building_id: buildingId,
-      floor_name: floorName,
-      image_url: imageUrl,
-    }),
+    body: JSON.stringify({ building_id: buildingId, floor_name: floorName, image_url: imageUrl }),
   });
   const data = await handleJson<{ floorplan: FloorPlan }>(res);
   return data.floorplan;
@@ -343,7 +311,7 @@ export async function deleteFloorPlan(id: number): Promise<void> {
 // ── Heatmap ────────────────────────────────────────────────────────────────────
 
 export async function fetchFloorplanHeatmap(floorplanId: number): Promise<HeatmapPoint[]> {
-  // No session_id needed anymore — just pass the floorplan
+  // Note: no session_id needed — queries scan_point directly
   const res = await fetch(`${API_BASE}/heatmap/floorplan/${floorplanId}`, { cache: "no-store" });
   return handleJson(res);
 }

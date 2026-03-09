@@ -50,14 +50,14 @@ export default function LandingPage() {
             </svg>
             View Signal Map
           </Link>
-          <Link href="/admin/studio" className="btn btn-secondary">
+          <Link href="/admin/login" className="btn btn-secondary">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
               <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
             </svg>
-            Admin Studio
+            Admin Login
           </Link>
         </div>
       </section>

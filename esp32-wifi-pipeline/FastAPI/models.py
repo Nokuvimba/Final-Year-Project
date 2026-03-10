@@ -50,52 +50,38 @@ class FloorPlanDB(Base):
 
 class ScanPointDB(Base):
     """
-    A physical coordinate on a floor plan image where an ESP32 sits.
+    A physical coordinate on a floor plan image where an ESP32 device is placed.
 
     The admin clicks the floor plan image → a pin drops at (x, y).
-    All wifi_scan rows from a device assigned here carry scan_point_id.
+    All sensor readings from the assigned device carry this scan_point_id.
 
-    label is optional display text — NO FK to room table.
-    Room table stays for organisational grouping only.
+    assigned_node  — which ESP32 is currently at this location (nullable).
+                     UNIQUE constraint: one device can only be at one point at a time.
+    assigned_at    — when the device was last assigned here.
 
-    Future sensors just add a FK to this same table:
-        dht22_reading.scan_point_id  →  scan_point.id
-        air_reading.scan_point_id    →  scan_point.id
+    Future sensors (DHT22, air quality) just add:
+        temperature_reading.scan_point_id  → scan_point.id
+        air_quality_reading.scan_point_id  → scan_point.id
+    Zero further schema changes needed.
     """
     __tablename__ = "scan_point"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    floorplan_id = Column(Integer, ForeignKey("floor_plan.id", ondelete="CASCADE"), nullable=False, index=True)
-    x            = Column(Float, nullable=False)   # 0.0 – 1.0 fraction of image width
-    y            = Column(Float, nullable=False)   # 0.0 – 1.0 fraction of image height
-    label        = Column(Text, nullable=True)     # optional display name e.g. "Near window"
-    created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id            = Column(Integer, primary_key=True, index=True)
+    floorplan_id  = Column(Integer, ForeignKey("floor_plan.id", ondelete="CASCADE"), nullable=False, index=True)
+    x             = Column(Float, nullable=False)   # 0.0–1.0 fraction of image width
+    y             = Column(Float, nullable=False)   # 0.0–1.0 fraction of image height
+    label         = Column(Text, nullable=True)     # optional display name e.g. "Near window"
+    assigned_node = Column(Text, nullable=True, unique=True)   # ESP32 node id currently here
+    assigned_at   = Column(DateTime(timezone=True), nullable=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         CheckConstraint("x >= 0 AND x <= 1", name="ck_scan_point_x"),
         CheckConstraint("y >= 0 AND y <= 1", name="ck_scan_point_y"),
     )
 
-    floorplan          = relationship("FloorPlanDB",   back_populates="scan_points")
-    scans              = relationship("WifiScanDB",    back_populates="scan_point")
-    active_assignment  = relationship("ActivePointDB", back_populates="scan_point", uselist=False)
-
-
-class ActivePointDB(Base):
-    """
-    Device → scan_point registry (replaces active_room).
-    One row per ESP32 node. Ingest reads this to stamp scan_point_id.
-
-    Assign:  POST /devices/{node}/assign-point/{scan_point_id}
-    Clear:   POST /devices/{node}/clear-point
-    """
-    __tablename__ = "active_point"
-
-    node          = Column(Text, primary_key=True)
-    scan_point_id = Column(Integer, ForeignKey("scan_point.id", ondelete="SET NULL"), nullable=True, index=True)
-    assigned_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    scan_point = relationship("ScanPointDB", back_populates="active_assignment")
+    floorplan = relationship("FloorPlanDB", back_populates="scan_points")
+    scans     = relationship("WifiScanDB",  back_populates="scan_point")
 
 
 class WifiScanDB(Base):
@@ -111,10 +97,10 @@ class WifiScanDB(Base):
     channel      = Column(Integer)
     enc          = Column(Text)
 
-    # Primary FK — coordinate stamped at ingest via active_point lookup
+    # Coordinate stamped at ingest — look up scan_point by assigned_node
     scan_point_id = Column(Integer, ForeignKey("scan_point.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    # Organisational only — NOT written at ingest, kept for admin display
+    # Organisational only — NOT written at ingest
     room_id = Column(Integer, ForeignKey("room.id", ondelete="SET NULL"), nullable=True, index=True)
 
     scan_point = relationship("ScanPointDB", back_populates="scans")

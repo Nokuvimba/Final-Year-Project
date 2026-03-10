@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from database import Base, engine, get_db
 from models import (
     WifiScanDB, BuildingDB, RoomDB,
-    FloorPlanDB, ScanPointDB, ActivePointDB,
+    FloorPlanDB, ScanPointDB,
 )
 from schemas import (
     BuildingCreate, BuildingUpdate,
@@ -53,7 +53,7 @@ def health():
 # ── Ingest ────────────────────────────────────────────────────────────────────
 #
 # ESP32 sends batches of scan objects here.
-# We look up active_point for the node and stamp scan_point_id directly.
+# We look up scan_point directly by assigned_node and stamp scan_point_id.
 # No sessions, no room_id written here.
 
 @app.post("/ingest", include_in_schema=False)
@@ -64,7 +64,8 @@ def ingest(
     if not isinstance(scans, list) or not scans:
         raise HTTPException(status_code=400, detail="Payload must be a non-empty array")
 
-    # Cache active_point lookups within this batch
+    # Cache scan_point lookups within this batch.
+    # Query scan_point directly by assigned_node — no separate active_point table.
     point_cache: Dict[str, Optional[int]] = {}
     accepted = 0
 
@@ -72,19 +73,8 @@ def ingest(
         node = s.get("node")
 
         if node not in point_cache:
-            assignment = db.query(ActivePointDB).filter(ActivePointDB.node == node).first()
-
-            # Auto-register node as unassigned on first contact
-            if assignment is None:
-                assignment = ActivePointDB(node=node, scan_point_id=None)
-                db.add(assignment)
-                try:
-                    db.commit()
-                except IntegrityError:
-                    db.rollback()
-                    assignment = db.query(ActivePointDB).filter(ActivePointDB.node == node).first()
-
-            point_cache[node] = assignment.scan_point_id if assignment else None
+            point = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
+            point_cache[node] = point.id if point else None
 
         row = WifiScanDB(
             node=node,
@@ -198,11 +188,9 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
 
 
 def _format_point(point: ScanPointDB, db: Session) -> dict:
-    """Helper — serialise a ScanPointDB with its device assignment if any."""
-    assignment = db.query(ActivePointDB).filter(
-        ActivePointDB.scan_point_id == point.id
-    ).first()
-
+    """Helper — serialise a ScanPointDB row.
+    assigned_node lives directly on scan_point now — no join needed anymore.
+    """
     scan_count = db.query(func.count(WifiScanDB.id)).filter(
         WifiScanDB.scan_point_id == point.id
     ).scalar() or 0
@@ -214,31 +202,41 @@ def _format_point(point: ScanPointDB, db: Session) -> dict:
         "y": point.y,
         "label": point.label,
         "created_at": point.created_at,
+        "assigned_at": point.assigned_at,
         "scan_count": scan_count,
-        "assigned_node": assignment.node if assignment else None,
-        "is_active": assignment is not None,
+        "assigned_node": point.assigned_node,
+        "is_active": point.assigned_node is not None,
     }
 
 
-# ── Device Management (active_point) ─────────────────────────────────────────
+# ── Device Management ────────────────────────────────────────────────────────
+# Devices are now tracked via scan_point.assigned_node directly.
+# A "device" is simply a scan_point that has assigned_node set.
 
 @app.get("/devices")
 def list_devices(db: Session = Depends(get_db)):
-    devices = db.query(ActivePointDB).order_by(ActivePointDB.node).all()
+    # Return all scan points that have a device assigned
+    # plus any node names seen in wifi_scan but not yet assigned to a point
+    assigned_points = (
+        db.query(ScanPointDB)
+        .filter(ScanPointDB.assigned_node.isnot(None))
+        .order_by(ScanPointDB.assigned_node)
+        .all()
+    )
 
     return {
         "devices": [
             {
-                "node": d.node,
-                "scan_point_id": d.scan_point_id,
-                "label": d.scan_point.label if d.scan_point else None,
-                "x": d.scan_point.x if d.scan_point else None,
-                "y": d.scan_point.y if d.scan_point else None,
-                "floorplan_id": d.scan_point.floorplan_id if d.scan_point else None,
-                "assigned_at": d.assigned_at,
-                "is_active": d.scan_point_id is not None,
+                "node": p.assigned_node,
+                "scan_point_id": p.id,
+                "label": p.label,
+                "x": p.x,
+                "y": p.y,
+                "floorplan_id": p.floorplan_id,
+                "assigned_at": p.assigned_at,
+                "is_active": True,
             }
-            for d in devices
+            for p in assigned_points
         ]
     }
 
@@ -253,15 +251,21 @@ def assign_point_to_device(
     if not point:
         raise HTTPException(status_code=404, detail="Scan point not found")
 
-    assignment = db.query(ActivePointDB).filter(ActivePointDB.node == node).first()
-    if assignment:
-        assignment.scan_point_id = scan_point_id
-    else:
-        assignment = ActivePointDB(node=node, scan_point_id=scan_point_id)
-        db.add(assignment)
+    # If this node is already assigned somewhere else, clear it first
+    old_point = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
+    if old_point and old_point.id != scan_point_id:
+        old_point.assigned_node = None
+        old_point.assigned_at   = None
 
+    # If target point already has a different device, clear that device first
+    if point.assigned_node and point.assigned_node != node:
+        point.assigned_node = None
+        point.assigned_at   = None
+
+    point.assigned_node = node
+    point.assigned_at   = func.now()
     db.commit()
-    db.refresh(assignment)
+    db.refresh(point)
 
     return {
         "node": node,
@@ -269,17 +273,18 @@ def assign_point_to_device(
         "label": point.label,
         "x": point.x,
         "y": point.y,
-        "assigned_at": assignment.assigned_at,
+        "assigned_at": point.assigned_at,
     }
 
 
 @app.post("/devices/{node}/clear-point")
 def clear_point_from_device(node: str, db: Session = Depends(get_db)):
-    assignment = db.query(ActivePointDB).filter(ActivePointDB.node == node).first()
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Device not found")
+    point = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
+    if not point:
+        raise HTTPException(status_code=404, detail="Device not found or not assigned")
 
-    assignment.scan_point_id = None
+    point.assigned_node = None
+    point.assigned_at   = None
     db.commit()
     return {"node": node, "scan_point_id": None, "message": "Device unassigned"}
 

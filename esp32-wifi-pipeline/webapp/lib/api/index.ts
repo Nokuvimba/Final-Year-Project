@@ -4,13 +4,15 @@ export type {
   Building,
   Room,
   WifiScan,
-  ScanSession,
   FloorPlan,
   BuildingFloorPlans,
   HeatmapPoint,
-  RoomWifiRow,
   BuildingWifiRow,
   RoomScanData,
+  ScanPoint,
+  ScanPointsResponse,
+  Device,
+  DevicesResponse,
 } from "./types";
 
 export {
@@ -30,13 +32,14 @@ export {
 
 export {
   fetchRecentScans,
-  fetchRoomScans,
-  fetchBuildingScans,
-  startRoomScan,
-  stopRoomScan,
+  fetchScanPoints,
+  createScanPoint,
+  updateScanPoint,
+  deleteScanPoint,
+  fetchDevices,
+  assignDeviceToPoint,
+  clearDevicePoint,
 } from "./scans";
-
-export { fetchScanSessions } from "./sessions";
 
 export {
   fetchBuildingFloorPlans,

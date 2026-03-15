@@ -5,7 +5,7 @@ export async function fetchFloorplanHeatmap(
   floorplanId: number
 ): Promise<HeatmapPoint[]> {
   const res = await fetch(
-    `${API_BASE}/heatmap/floorplan/${floorplanId}/latest`,
+    `${API_BASE}/heatmap/floorplan/${floorplanId}`,
     { cache: "no-store" }
   );
   return handleJson(res);

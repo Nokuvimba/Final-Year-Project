@@ -457,7 +457,15 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
     <div style={{ display:"flex", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:9, padding:3, gap:2 }}>
       {(["edit","view"] as Mode[]).map(m => (
         <button key={m} onClick={() => onChange(m)}
-          style={{ padding:"0.28rem 0.875rem", borderRadius:7, border:"none", cursor:"pointer", fontSize:"0.76rem", fontWeight:700, letterSpacing:"0.05em", textTransform:"capitalize", transition:"all 0.15s", background: mode === m ? "#1d4ed8" : "transparent", color: mode === m ? "#fff" : "#64748b", boxShadow: mode === m ? "0 0 14px rgba(29,78,216,0.5)" : "none" }}>
+          style={{
+            padding: "0.28rem 0.875rem", borderRadius: 7,
+            borderWidth: 1, borderStyle: "solid", borderColor: "transparent",
+            cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
+            letterSpacing: "0.05em", textTransform: "capitalize", transition: "all 0.15s",
+            background: mode === m ? "#1d4ed8" : "transparent",
+            color: mode === m ? "#fff" : "#64748b",
+            boxShadow: mode === m ? "0 0 14px rgba(29,78,216,0.5)" : "none",
+          }}>
           {m}
         </button>
       ))}
@@ -546,7 +554,7 @@ const css: Record<string, React.CSSProperties> = {
   body:               { flex:1, display:"grid", gridTemplateColumns:"1fr 420px", overflow:"hidden" },
   leftPane:           { display:"flex", flexDirection:"column", overflow:"hidden", borderRight:"1px solid rgba(255,255,255,0.06)" },
   floorTabs:          { display:"flex", gap:3, padding:"0.45rem 1rem", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, overflowX:"auto" },
-  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, border:"1px solid rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
+  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, borderWidth:"1px", borderStyle:"solid", borderColor:"rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
   floorTabActive:     { borderColor:"#1d4ed8", background:"rgba(29,78,216,0.12)", color:"#60a5fa" },
   canvasArea:         { flex:1, padding:"1rem", overflow:"auto", display:"flex", flexDirection:"column" },
   breadcrumb:         { display:"flex", alignItems:"center", gap:"0.35rem", marginBottom:"0.75rem", flexShrink:0 },

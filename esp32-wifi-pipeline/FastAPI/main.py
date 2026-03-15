@@ -128,9 +128,9 @@ def list_scan_points(
 @app.post("/floorplans/{floorplan_id}/scan-points")
 def create_scan_point(
     floorplan_id: int,
-    x: float = Body(...),
-    y: float = Body(...),
-    label: Optional[str] = Body(None),
+    x: float = Body(..., embed=True),
+    y: float = Body(..., embed=True),
+    label: Optional[str] = Body(None, embed=True),
     db: Session = Depends(get_db),
 ):
     floorplan = db.get(FloorPlanDB, floorplan_id)
@@ -151,9 +151,9 @@ def create_scan_point(
 @app.put("/scan-points/{point_id}")
 def update_scan_point(
     point_id: int,
-    label: Optional[str] = Body(None),
-    x: Optional[float] = Body(None),
-    y: Optional[float] = Body(None),
+    label: Optional[str] = Body(None, embed=True),
+    x: Optional[float] = Body(None, embed=True),
+    y: Optional[float] = Body(None, embed=True),
     db: Session = Depends(get_db),
 ):
     point = db.get(ScanPointDB, point_id)

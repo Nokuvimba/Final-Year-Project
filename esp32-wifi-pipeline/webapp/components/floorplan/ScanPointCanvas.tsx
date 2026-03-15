@@ -135,7 +135,9 @@ export default function ScanPointCanvas({
               background: isSelected
                 ? "#3b82f6"
                 : pt.assigned_node ? "#22c55e" : "#64748b",
-              border: `2px solid ${isSelected ? "#93c5fd" : "rgba(255,255,255,0.3)"}`,
+              borderWidth: 2,
+              borderStyle: "solid",
+              borderColor: isSelected ? "#93c5fd" : "rgba(255,255,255,0.3)",
               boxShadow: isSelected
                 ? "0 0 14px rgba(59,130,246,0.7)"
                 : pt.assigned_node ? "0 0 8px rgba(34,197,94,0.5)" : "none",

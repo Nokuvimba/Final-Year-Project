@@ -95,3 +95,9 @@ export async function clearDevicePoint(node: string): Promise<void> {
   );
   await handleJson(res);
 }
+
+export async function fetchKnownNodes(): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
+  const data = await handleJson<{ nodes: string[] }>(res);
+  return data.nodes ?? [];
+}

@@ -112,6 +112,7 @@ export type HeatmapPoint = {
   avg_rssi: number | null;
   level: SignalLevel;
   samples: number;
+  assigned_node: string | null;
 };
 
 // ─── Legacy — kept for type compatibility only, not used in new pages ─────────

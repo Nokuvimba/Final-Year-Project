@@ -13,7 +13,9 @@ import {
   clearDevicePoint,
   updateScanPoint,
   deleteScanPoint,
+  fetchKnownNodes,
   uploadFloorPlan,
+
   type Building,
   type FloorPlan,
   type ScanPoint,
@@ -45,6 +47,8 @@ export default function AdminStudioClient() {
   const [selectedFloorplan, setSelectedFloorplan] = useState<FloorPlan | null>(null);
   const [scanPoints,        setScanPoints]        = useState<ScanPoint[]>([]);
   const [devices,           setDevices]           = useState<Device[]>([]);
+  const [knownNodes,        setKnownNodes]        = useState<string[]>([]);
+  const [nodeInput,         setNodeInput]         = useState("");
   const [selectedPoint,     setSelectedPoint]     = useState<ScanPoint | null>(null);
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -78,11 +82,13 @@ export default function AdminStudioClient() {
     })();
   }, []);
 
-  // Reload devices when right panel opens on a point
+  // Reload devices + known nodes when right panel opens on a point
   useEffect(() => {
     if (selectedPoint) {
       fetchDevices().then(setDevices).catch(console.error);
+      fetchKnownNodes().then(setKnownNodes).catch(console.error);
       setLabelDraft(selectedPoint.label ?? "");
+      setNodeInput(selectedPoint.assigned_node ?? "");
     }
   }, [selectedPoint?.id]);
 
@@ -126,11 +132,14 @@ export default function AdminStudioClient() {
   async function handleAssignDevice(node: string) {
     if (!selectedPoint) return;
     try {
-      if (node === "") {
+      if (!node) {
         const current = devices.find(d => d.scan_point_id === selectedPoint.id);
         if (current) await clearDevicePoint(current.node);
+        setNodeInput("");
       } else {
         await assignDeviceToPoint(node, selectedPoint.id);
+        setNodeInput(node);
+        setKnownNodes(prev => prev.includes(node) ? prev : [...prev, node].sort());
       }
       const [updatedDevices, updatedPts] = await Promise.all([
         fetchDevices(),
@@ -339,22 +348,43 @@ export default function AdminStudioClient() {
                 </Card>
 
                 {/* Device assignment */}
-                <Card title="Assigned Device">
-                  <select value={assignedDevice?.node ?? ""} onChange={e => handleAssignDevice(e.target.value)}
-                    style={{ ...css.select, color: assignedDevice ? "#60a5fa" : "#64748b" }}>
-                    <option value="">— Unassigned —</option>
-                    {assignedDevice && <option value={assignedDevice.node}>{assignedDevice.node} ✓</option>}
-                    {devices.filter(d => d.node !== assignedDevice?.node).map(d => (
-                      <option key={d.node} value={d.node} style={{ background:"#0f1929" }}>
-                        {d.node}{d.scan_point_id !== selectedPoint.id ? ` (point #${d.scan_point_id})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {assignedDevice && (
-                    <div style={{ marginTop:"0.4rem", display:"flex", alignItems:"center", gap:"0.4rem" }}>
-                      <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 7px #22c55e", display:"inline-block" }}/>
-                      <span style={{ fontSize:"0.7rem", color:"#4ade80", fontWeight:600 }}>Live — scanning</span>
+                <Card title="Assign Device">
+                  <div style={{ display:"flex", gap:"0.5rem" }}>
+                    <div style={{ flex:1, position:"relative" }}>
+                      <input
+                        list="known-nodes"
+                        value={nodeInput}
+                        onChange={e => setNodeInput(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && handleAssignDevice(nodeInput.trim())}
+                        placeholder="ESP32 node name…"
+                        style={{ ...css.labelInput, width:"100%" }}
+                      />
+                      <datalist id="known-nodes">
+                        {knownNodes.map(n => <option key={n} value={n} />)}
+                      </datalist>
                     </div>
+                    <button onClick={() => handleAssignDevice(nodeInput.trim())} style={css.saveBtn}>
+                      Assign
+                    </button>
+                  </div>
+                  {assignedDevice ? (
+                    <div style={{ marginTop:"0.5rem", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:"0.4rem" }}>
+                        <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 7px #22c55e", display:"inline-block" }}/>
+                        <span style={{ fontSize:"0.71rem", color:"#4ade80", fontWeight:600 }}>{assignedDevice.node}</span>
+                      </div>
+                      <button
+                        onClick={() => handleAssignDevice("")}
+                        style={{ background:"none", border:"none", fontSize:"0.7rem", color:"#475569", cursor:"pointer", textDecoration:"underline" }}>
+                        Unassign
+                      </button>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize:"0.7rem", color:"#334155", marginTop:"0.4rem" }}>
+                      {knownNodes.length > 0
+                        ? "Select a node from the dropdown or type a new one."
+                        : "No nodes seen yet — make sure your ESP32 is sending to /ingest."}
+                    </p>
                   )}
                 </Card>
 

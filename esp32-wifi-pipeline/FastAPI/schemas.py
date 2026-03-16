@@ -70,6 +70,7 @@ class HeatmapPoint(BaseModel):
     avg_rssi: Optional[float]
     level: Optional[str]
     samples: int
+    assigned_node: Optional[str] = None
 
     class Config:
         json_schema_extra = {

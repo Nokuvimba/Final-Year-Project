@@ -107,11 +107,12 @@ export type SignalLevel = "strong" | "medium" | "low" | "weak" | null;
 export type HeatmapPoint = {
   room_id: number;              // scan_point.id (field reused for compat)
   room_name: string;            // scan_point.label or "Point {id}"
-  x: number;
-  y: number;
+  x: number | null;
+  y: number | null;
   avg_rssi: number | null;
   level: SignalLevel;
   samples: number;
+  assigned_node: string | null;
 };
 
 // ─── Legacy — kept for type compatibility only, not used in new pages ─────────

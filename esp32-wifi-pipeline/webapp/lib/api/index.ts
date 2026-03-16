@@ -39,6 +39,7 @@ export {
   fetchDevices,
   assignDeviceToPoint,
   clearDevicePoint,
+  fetchKnownNodes,
 } from "./scans";
 
 export {

@@ -128,9 +128,9 @@ def list_scan_points(
 @app.post("/floorplans/{floorplan_id}/scan-points")
 def create_scan_point(
     floorplan_id: int,
-    x: float = Body(...),
-    y: float = Body(...),
-    label: Optional[str] = Body(None),
+    x: float = Body(..., embed=True),
+    y: float = Body(..., embed=True),
+    label: Optional[str] = Body(None, embed=True),
     db: Session = Depends(get_db),
 ):
     floorplan = db.get(FloorPlanDB, floorplan_id)
@@ -151,9 +151,9 @@ def create_scan_point(
 @app.put("/scan-points/{point_id}")
 def update_scan_point(
     point_id: int,
-    label: Optional[str] = Body(None),
-    x: Optional[float] = Body(None),
-    y: Optional[float] = Body(None),
+    label: Optional[str] = Body(None, embed=True),
+    x: Optional[float] = Body(None, embed=True),
+    y: Optional[float] = Body(None, embed=True),
     db: Session = Depends(get_db),
 ):
     point = db.get(ScanPointDB, point_id)
@@ -212,6 +212,24 @@ def _format_point(point: ScanPointDB, db: Session) -> dict:
 # ── Device Management ────────────────────────────────────────────────────────
 # Devices are now tracked via scan_point.assigned_node directly.
 # A "device" is simply a scan_point that has assigned_node set.
+
+@app.get("/devices/known")
+def list_known_nodes(db: Session = Depends(get_db)):
+    assigned = {
+        row.assigned_node
+        for row in db.query(ScanPointDB.assigned_node)
+        .filter(ScanPointDB.assigned_node.isnot(None))
+        .all()
+    }
+    seen = {
+        row.node
+        for row in db.query(WifiScanDB.node)
+        .filter(WifiScanDB.node.isnot(None))
+        .distinct()
+        .all()
+    }
+    return {"nodes": sorted(assigned | seen)}
+
 
 @app.get("/devices")
 def list_devices(db: Session = Depends(get_db)):
@@ -525,24 +543,26 @@ def get_floorplan_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
             ScanPointDB.label,
             ScanPointDB.x,
             ScanPointDB.y,
+            ScanPointDB.assigned_node,
             func.avg(WifiScanDB.rssi).label("avg_rssi"),
             func.count(WifiScanDB.id).label("samples"),
         )
         .outerjoin(WifiScanDB, WifiScanDB.scan_point_id == ScanPointDB.id)
         .filter(ScanPointDB.floorplan_id == floorplan_id)
-        .group_by(ScanPointDB.id, ScanPointDB.label, ScanPointDB.x, ScanPointDB.y)
+        .group_by(ScanPointDB.id, ScanPointDB.label, ScanPointDB.x, ScanPointDB.y, ScanPointDB.assigned_node)
         .all()
     )
 
     return [
         HeatmapPoint(
-            room_id=row.id,           # reusing room_id field for scan_point id
+            room_id=row.id,
             room_name=row.label or f"Point {row.id}",
             x=row.x,
             y=row.y,
             avg_rssi=float(row.avg_rssi) if row.avg_rssi else None,
             level=_signal_level(float(row.avg_rssi) if row.avg_rssi else None),
             samples=row.samples or 0,
+            assigned_node=row.assigned_node,
         )
         for row in result
     ]

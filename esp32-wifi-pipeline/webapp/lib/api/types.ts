@@ -107,12 +107,44 @@ export type SignalLevel = "strong" | "medium" | "low" | "weak" | null;
 export type HeatmapPoint = {
   room_id: number;              // scan_point.id (field reused for compat)
   room_name: string;            // scan_point.label or "Point {id}"
-  x: number | null;
-  y: number | null;
+  x: number;
+  y: number;
   avg_rssi: number | null;
   level: SignalLevel;
   samples: number;
-  assigned_node: string | null;
+  assigned_node: string | null; // which ESP32 is at this point (for Device Status card)
+};
+
+// All node names ever seen — assigned or unassigned.
+// Used to populate device assignment dropdown in admin studio.
+export type KnownNodesResponse = {
+  nodes: string[];
+};
+
+
+// ─── WiFi signal history (bucketed by minute) ────────────────────────────────
+// Used by the signal trend chart in the admin studio sensor card.
+// Each bucket = one minute of data at that scan point.
+//
+// count    = number of wifi_scan rows received that minute ("busyness")
+//            One ESP32 scan cycle typically produces 10–15 rows (one per SSID).
+//            High count = ESP32 was actively scanning. Zero = device was silent.
+// avg_rssi = average signal strength across all rows in that minute
+// level    = signal category derived from avg_rssi (strong/medium/low/weak)
+
+export type WifiHistoryBucket = {
+  minute_ago: number;          // 0 = most recent minute, 19 = 19 minutes ago
+  count: number;               // scan rows received — the "busyness" value
+  avg_rssi: number | null;     // null when count is 0
+  level: SignalLevel;          // null when count is 0
+};
+
+export type WifiHistoryResponse = {
+  scan_point_id: number;
+  label: string | null;
+  minutes: number;
+  total_scans: number;
+  buckets: WifiHistoryBucket[];
 };
 
 // ─── Legacy — kept for type compatibility only, not used in new pages ─────────

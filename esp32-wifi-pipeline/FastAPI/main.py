@@ -443,12 +443,25 @@ def update_building(building_id: int, payload: BuildingUpdate, db: Session = Dep
 
 @app.delete("/buildings/{building_id}")
 def delete_building(building_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a building and everything underneath it (explicit cascade).
+    Order: wifi_scan rows → scan_points → floor_plans → building
+    Done explicitly so FK constraints are always satisfied regardless
+    of whether the DB schema has CASCADE configured.
+    """
     building = db.get(BuildingDB, building_id)
     if not building:
         raise HTTPException(status_code=404, detail="Building not found")
+
+    for fp in building.floorplans:
+        for sp in fp.scan_points:
+            db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == sp.id).delete()
+            db.delete(sp)
+        db.delete(fp)
+
     db.delete(building)
     db.commit()
-    return {"message": "Building deleted"}
+    return {"message": f"Building '{building.name}' and all associated data deleted"}
 
 
 # ── Rooms (organisational only) ───────────────────────────────────────────────
@@ -592,16 +605,60 @@ def get_building_floorplans(building_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/floorplans/{floorplan_id}")
 def delete_floorplan(floorplan_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a floor plan and everything under it (explicit cascade).
+    Order: wifi_scan rows → scan_points → floor_plan → uploaded image file
+    """
     fp = db.get(FloorPlanDB, floorplan_id)
     if not fp:
         raise HTTPException(status_code=404, detail="Floor plan not found")
-    if fp.image_url.startswith("/uploads/"):
+
+    for sp in fp.scan_points:
+        db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == sp.id).delete()
+        db.delete(sp)
+
+    if fp.image_url and fp.image_url.startswith("/uploads/"):
         path = fp.image_url[1:]
         if os.path.exists(path):
             os.remove(path)
+
     db.delete(fp)
     db.commit()
-    return {"message": "Floor plan deleted"}
+    return {"message": f"Floor plan '{fp.floor_name}' and all associated data deleted"}
+
+
+@app.put("/floorplans/{floorplan_id}/image")
+async def replace_floorplan_image(
+    floorplan_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Replace the image for an existing floor plan.
+    Scan points are preserved — their (x, y) coordinates stay attached.
+    The old image file is deleted from disk if it was a local upload.
+    """
+    fp = db.get(FloorPlanDB, floorplan_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+
+    # Remove old image from disk
+    if fp.image_url and fp.image_url.startswith("/uploads/"):
+        old_path = fp.image_url[1:]
+        if os.path.exists(old_path):
+            os.remove(old_path)
+
+    # Save new image
+    ext      = os.path.splitext(file.filename or "image.png")[1] or ".png"
+    filename = f"{floorplan_id}_replace_{uuid.uuid4().hex[:8]}{ext}"
+    file_path = f"uploads/floorplans/{filename}"
+    with open(file_path, "wb") as f_out:
+        f_out.write(await file.read())
+
+    fp.image_url = f"/uploads/floorplans/{filename}"
+    db.commit()
+    db.refresh(fp)
+    return {"floorplan": {"id": fp.id, "floor_name": fp.floor_name, "image_url": fp.image_url}}
 
 
 # ── Heatmap ───────────────────────────────────────────────────────────────────

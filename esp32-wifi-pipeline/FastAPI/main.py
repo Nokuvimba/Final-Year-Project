@@ -128,9 +128,9 @@ def list_scan_points(
 @app.post("/floorplans/{floorplan_id}/scan-points")
 def create_scan_point(
     floorplan_id: int,
-    x: float = Body(..., embed=True),
-    y: float = Body(..., embed=True),
-    label: Optional[str] = Body(None, embed=True),
+    x: float = Body(...),
+    y: float = Body(...),
+    label: Optional[str] = Body(None),
     db: Session = Depends(get_db),
 ):
     floorplan = db.get(FloorPlanDB, floorplan_id)
@@ -151,9 +151,9 @@ def create_scan_point(
 @app.put("/scan-points/{point_id}")
 def update_scan_point(
     point_id: int,
-    label: Optional[str] = Body(None, embed=True),
-    x: Optional[float] = Body(None, embed=True),
-    y: Optional[float] = Body(None, embed=True),
+    label: Optional[str] = Body(None),
+    x: Optional[float] = Body(None),
+    y: Optional[float] = Body(None),
     db: Session = Depends(get_db),
 ):
     point = db.get(ScanPointDB, point_id)
@@ -186,10 +186,88 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Scan point deleted"}
 
+@app.get("/scan-points/{point_id}/wifi-history")
+def get_scan_point_wifi_history(
+    point_id: int,
+    minutes: int = Query(default=20, ge=1, le=60),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns WiFi scan history bucketed by minute for a specific scan point.
+
+    Each bucket contains:
+      - minute_ago : how many minutes ago (0 = most recent minute)
+      - count      : number of wifi_scan rows received in that minute
+                     This is the "busyness" — how many network readings
+                     the ESP32 sent in that period. One ESP32 scan cycle
+                     typically produces 10–15 rows (one per SSID found).
+      - avg_rssi   : average signal strength across all rows in that minute
+      - level      : signal level derived from avg_rssi
+                     (strong / medium / low / weak / null)
+
+    Buckets with count=0 and avg_rssi=null mean no scans arrived that minute.
+    """
+    point = db.get(ScanPointDB, point_id)
+    if not point:
+        raise HTTPException(status_code=404, detail="Scan point not found")
+
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=minutes)
+
+    rows = (
+        db.query(WifiScanDB)
+        .filter(
+            WifiScanDB.scan_point_id == point_id,
+            WifiScanDB.received_at >= cutoff,
+        )
+        .order_by(WifiScanDB.received_at)
+        .all()
+    )
+
+    # Build minute buckets: bucket 0 = oldest, bucket (minutes-1) = most recent
+    buckets: dict[int, dict] = {
+        i: {"minute_ago": minutes - 1 - i, "count": 0, "rssi_sum": 0.0, "rssi_n": 0}
+        for i in range(minutes)
+    }
+
+    for row in rows:
+        ts = row.received_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        delta_minutes = int((now - ts).total_seconds() // 60)
+        bucket_index = minutes - 1 - delta_minutes
+        if 0 <= bucket_index < minutes:
+            buckets[bucket_index]["count"] += 1
+            if row.rssi is not None:
+                buckets[bucket_index]["rssi_sum"] += row.rssi
+                buckets[bucket_index]["rssi_n"]   += 1
+
+    result = []
+    for i in range(minutes):
+        b = buckets[i]
+        avg_rssi = round(b["rssi_sum"] / b["rssi_n"], 1) if b["rssi_n"] > 0 else None
+        result.append({
+            "minute_ago": b["minute_ago"],
+            "count":      b["count"],
+            "avg_rssi":   avg_rssi,
+            "level":      _signal_level(avg_rssi),
+        })
+
+    return {
+        "scan_point_id": point_id,
+        "label":         point.label,
+        "minutes":       minutes,
+        "total_scans":   sum(b["count"] for b in result),
+        "buckets":       result,
+    }
+
+
 
 def _format_point(point: ScanPointDB, db: Session) -> dict:
     """Helper — serialise a ScanPointDB row.
-    assigned_node lives directly on scan_point now — no join needed anymore.
+    assigned_node lives directly on scan_point now — no join needed.
     """
     scan_count = db.query(func.count(WifiScanDB.id)).filter(
         WifiScanDB.scan_point_id == point.id
@@ -212,24 +290,6 @@ def _format_point(point: ScanPointDB, db: Session) -> dict:
 # ── Device Management ────────────────────────────────────────────────────────
 # Devices are now tracked via scan_point.assigned_node directly.
 # A "device" is simply a scan_point that has assigned_node set.
-
-@app.get("/devices/known")
-def list_known_nodes(db: Session = Depends(get_db)):
-    assigned = {
-        row.assigned_node
-        for row in db.query(ScanPointDB.assigned_node)
-        .filter(ScanPointDB.assigned_node.isnot(None))
-        .all()
-    }
-    seen = {
-        row.node
-        for row in db.query(WifiScanDB.node)
-        .filter(WifiScanDB.node.isnot(None))
-        .distinct()
-        .all()
-    }
-    return {"nodes": sorted(assigned | seen)}
-
 
 @app.get("/devices")
 def list_devices(db: Session = Depends(get_db)):
@@ -305,6 +365,33 @@ def clear_point_from_device(node: str, db: Session = Depends(get_db)):
     point.assigned_at   = None
     db.commit()
     return {"node": node, "scan_point_id": None, "message": "Device unassigned"}
+
+@app.get("/devices/known")
+def list_known_nodes(db: Session = Depends(get_db)):
+    """
+    Returns all ESP32 node names ever seen — whether currently assigned or not.
+    Used to populate the device assignment dropdown in the admin studio.
+    Combines:
+      - Nodes currently assigned to a scan_point (assigned_node column)
+      - Distinct node names from wifi_scan (nodes that have sent data)
+    """
+    # Nodes currently assigned
+    assigned = {
+        row.assigned_node
+        for row in db.query(ScanPointDB.assigned_node)
+        .filter(ScanPointDB.assigned_node.isnot(None))
+        .all()
+    }
+    # Nodes seen in wifi_scan
+    scanned = {
+        row.node
+        for row in db.query(WifiScanDB.node)
+        .filter(WifiScanDB.node.isnot(None))
+        .distinct()
+        .all()
+    }
+    all_nodes = sorted(assigned | scanned)
+    return {"nodes": all_nodes}
 
 
 # ── Buildings ─────────────────────────────────────────────────────────────────

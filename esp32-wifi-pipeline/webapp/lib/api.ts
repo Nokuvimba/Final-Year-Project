@@ -255,7 +255,6 @@ export async function clearDevicePoint(node: string): Promise<void> {
     await fetch(`${API_BASE}/devices/${encodeURIComponent(node)}/clear-point`, { method: "POST" })
   );
 }
-
 export async function fetchKnownNodes(): Promise<string[]> {
   const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
   const data = await handleJson<{ nodes: string[] }>(res);
@@ -320,4 +319,60 @@ export async function fetchFloorplanHeatmap(floorplanId: number): Promise<Heatma
   // Note: no session_id needed — queries scan_point directly
   const res = await fetch(`${API_BASE}/heatmap/floorplan/${floorplanId}`, { cache: "no-store" });
   return handleJson(res);
+}
+
+
+// ── Floor Plan — Replace Image ─────────────────────────────────────────────────
+// Replaces the image file for an existing floor plan.
+// Scan points are preserved — their (x, y) coordinates remain unchanged.
+// The old image file is deleted from disk automatically by the backend.
+
+export async function replaceFloorPlanImage(floorplanId: number, file: File): Promise<FloorPlan> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}/image`, {
+    method: "PUT",
+    body: formData,
+  });
+  const data = await handleJson<{ floorplan: FloorPlan }>(res);
+  return data.floorplan;
+}
+
+// ── WiFi Signal History ────────────────────────────────────────────────────────
+// Returns scan activity bucketed by minute for a specific scan point.
+// Used by the signal trend bar chart in the sensor card (admin studio + user viewer).
+//
+// minute_ago : 0 = most recent minute, 19 = oldest
+// count      : wifi_scan rows received that minute — the "busyness" value
+//              One ESP32 scan cycle produces ~10–20 rows (one per SSID found)
+// avg_rssi   : average signal strength across all rows in that minute
+// level      : strong / medium / low / weak — derived from avg_rssi
+
+export type SignalLevel = "strong" | "medium" | "low" | "weak" | null;
+
+export type WifiHistoryBucket = {
+  minute_ago: number;
+  count: number;
+  avg_rssi: number | null;
+  level: SignalLevel;
+};
+
+export type WifiHistoryResponse = {
+  scan_point_id: number;
+  label: string | null;
+  minutes: number;
+  total_scans: number;
+  buckets: WifiHistoryBucket[];
+};
+
+export async function fetchWifiHistory(
+  scanPointId: number,
+  minutes = 20
+): Promise<WifiHistoryBucket[]> {
+  const res = await fetch(
+    `${API_BASE}/scan-points/${scanPointId}/wifi-history?minutes=${minutes}`,
+    { cache: "no-store" }
+  );
+  const data = await handleJson<WifiHistoryResponse>(res);
+  return data.buckets ?? [];
 }

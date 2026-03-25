@@ -13,14 +13,20 @@ import {
   clearDevicePoint,
   updateScanPoint,
   deleteScanPoint,
-  fetchKnownNodes,
   uploadFloorPlan,
-
   type Building,
   type FloorPlan,
   type ScanPoint,
   type Device,
 } from "@/lib/api";
+
+const API_BASE_KNOWN = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+async function fetchKnownNodes(): Promise<string[]> {
+  const res = await fetch(`${API_BASE_KNOWN}/devices/known`, { cache: "no-store" });
+  const data = await res.json();
+  return data.nodes ?? [];
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,8 +67,14 @@ export default function AdminStudioClient() {
   const [deletingPoint, setDeletingPoint] = useState(false);
 
   // ── Modals ─────────────────────────────────────────────────────────────────
-  const [showBuildingModal, setShowBuildingModal] = useState(false);
-  const [showFloorModal,    setShowFloorModal]    = useState(false);
+  const [showBuildingModal,  setShowBuildingModal]  = useState(false);
+  const [showFloorModal,     setShowFloorModal]     = useState(false);
+  const [showDeleteBldgModal,  setShowDeleteBldgModal]  = useState(false);
+  const [deletingBuilding,     setDeletingBuilding]    = useState(false);
+  const [showDeleteFloorModal, setShowDeleteFloorModal] = useState(false);
+  const [deletingFloor,        setDeletingFloor]        = useState(false);
+  const [replacingFloor,       setReplacingFloor]       = useState(false);
+  const [replaceFloorFile,     setReplaceFloorFile]     = useState<File | null>(null);
   const [newBuildingName,   setNewBuildingName]   = useState("");
   const [newBuildingDesc,   setNewBuildingDesc]   = useState("");
   const [creatingBuilding,  setCreatingBuilding]  = useState(false);
@@ -88,6 +100,7 @@ export default function AdminStudioClient() {
       fetchDevices().then(setDevices).catch(console.error);
       fetchKnownNodes().then(setKnownNodes).catch(console.error);
       setLabelDraft(selectedPoint.label ?? "");
+      // Pre-fill node input with currently assigned device
       setNodeInput(selectedPoint.assigned_node ?? "");
     }
   }, [selectedPoint?.id]);
@@ -133,12 +146,14 @@ export default function AdminStudioClient() {
     if (!selectedPoint) return;
     try {
       if (!node) {
+        // Unassign — clear whatever device is currently at this point
         const current = devices.find(d => d.scan_point_id === selectedPoint.id);
         if (current) await clearDevicePoint(current.node);
         setNodeInput("");
       } else {
         await assignDeviceToPoint(node, selectedPoint.id);
         setNodeInput(node);
+        // Add to known nodes list if not already there
         setKnownNodes(prev => prev.includes(node) ? prev : [...prev, node].sort());
       }
       const [updatedDevices, updatedPts] = await Promise.all([
@@ -150,6 +165,68 @@ export default function AdminStudioClient() {
       const refreshed = updatedPts.find(p => p.id === selectedPoint.id);
       if (refreshed) setSelectedPoint(refreshed);
     } catch (e) { console.error(e); }
+  }
+
+  async function handleDeleteFloorplan() {
+    if (!selectedFloorplan) return;
+    setDeletingFloor(true);
+    try {
+      const res = await fetch(`${API_BASE}/floorplans/${selectedFloorplan.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      const remaining = floorplans.filter(fp => fp.id !== selectedFloorplan.id);
+      setFloorplans(remaining);
+      setScanPoints([]);
+      setSelectedPoint(null);
+      setSelectedFloorplan(remaining[0] ?? null);
+      setShowDeleteFloorModal(false);
+    } catch (e) { console.error(e); }
+    finally { setDeletingFloor(false); }
+  }
+
+  async function handleReplaceFloorplanImage() {
+    if (!selectedFloorplan || !replaceFloorFile) return;
+    setReplacingFloor(true);
+    try {
+      const form = new FormData();
+      form.append("file", replaceFloorFile);
+      const res = await fetch(`${API_BASE}/floorplans/${selectedFloorplan.id}/image`, { method: "PUT", body: form });
+      if (!res.ok) throw new Error("Replace failed");
+      const data = await res.json();
+      setFloorplans(fps => fps.map(fp => fp.id === selectedFloorplan.id ? { ...fp, image_url: data.floorplan.image_url } : fp));
+      setSelectedFloorplan((f: any) => f?.id === selectedFloorplan?.id ? { ...f, image_url: data.floorplan.image_url } : f);
+      setReplaceFloorFile(null);
+    } catch (e) { console.error(e); }
+    finally { setReplacingFloor(false); }
+  }
+
+  // Auto-trigger replace when a file is picked — defined after handleReplaceFloorplanImage
+  // so the function reference is always valid
+  useEffect(() => {
+    if (replaceFloorFile) handleReplaceFloorplanImage();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replaceFloorFile]);
+
+  async function handleDeleteBuilding() {
+    if (!selectedBuilding) return;
+    setDeletingBuilding(true);
+    try {
+      const res = await fetch(`${API_BASE}/buildings/${selectedBuilding.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      // Clear all state tied to this building
+      setSelectedBuilding(null);
+      setFloorplans([]);
+      setScanPoints([]);
+      setSelectedPoint(null);
+      setSelectedFloorplan(null);
+      setShowDeleteBldgModal(false);
+      // Refresh buildings list
+      const data = await fetch(`${API_BASE}/buildings`).then(r => r.json());
+      setBuildings(data.buildings ?? []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeletingBuilding(false);
+    }
   }
 
   async function handleDeletePoint() {
@@ -235,6 +312,15 @@ export default function AdminStudioClient() {
         <div style={css.topBarRight}>
           <ModeToggle mode={mode} onChange={setMode} />
           {selectedBuilding && (
+            <button
+              onClick={() => setShowDeleteBldgModal(true)}
+              title={`Delete ${selectedBuilding.name}`}
+              style={{ background:"none", border:"1px solid rgba(239,68,68,0.3)", cursor:"pointer", color:"#ef4444", fontSize:"0.75rem", padding:"0.28rem 0.6rem", borderRadius:6, lineHeight:1, transition:"all 0.15s", whiteSpace:"nowrap" }}
+              onMouseEnter={e => { e.currentTarget.style.background="rgba(239,68,68,0.12)"; e.currentTarget.style.borderColor="rgba(239,68,68,0.6)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background="none"; e.currentTarget.style.borderColor="rgba(239,68,68,0.3)"; }}
+            >🗑 Delete Building</button>
+          )}
+          {selectedBuilding && (
             <GhostBtn onClick={() => setShowFloorModal(true)}>+ Floor Plan</GhostBtn>
           )}
           <GhostBtn onClick={() => setShowBuildingModal(true)}>+ Building</GhostBtn>
@@ -249,14 +335,33 @@ export default function AdminStudioClient() {
         <div style={css.leftPane}>
 
           {/* Floor selector tabs */}
-          {floorplans.length > 1 && (
+          {floorplans.length > 0 && (
             <div style={css.floorTabs}>
               {floorplans.map(fp => (
-                <button key={fp.id} onClick={() => doSelectFloorplan(fp)}
-                  style={{ ...css.floorTab, ...(selectedFloorplan?.id === fp.id ? css.floorTabActive : {}) }}>
-                  {fp.floor_name}
-                </button>
+                <div key={fp.id} style={{ display:"flex", alignItems:"center", gap:2 }}>
+                  <button onClick={() => doSelectFloorplan(fp)}
+                    style={{ ...css.floorTab, ...(selectedFloorplan?.id === fp.id ? css.floorTabActive : {}), borderTopRightRadius:0, borderBottomRightRadius:0, borderRight:"none" }}>
+                    {fp.floor_name}
+                  </button>
+                  <button
+                    onClick={() => { doSelectFloorplan(fp); setShowDeleteFloorModal(true); }}
+                    title={`Delete ${fp.floor_name}`}
+                    style={{ ...css.floorTab, ...(selectedFloorplan?.id === fp.id ? css.floorTabActive : {}), padding:"0.28rem 0.45rem", borderTopLeftRadius:0, borderBottomLeftRadius:0, color:"#ef4444", fontSize:"0.7rem" }}
+                  >×</button>
+                </div>
               ))}
+              {selectedFloorplan && (
+                <label title="Replace floor plan image" style={{ ...css.floorTab, color:"#60a5fa", cursor:"pointer", display:"flex", alignItems:"center", gap:4, fontSize:"0.75rem" }}>
+                  {replacingFloor ? "Replacing…" : "↑ Replace image"}
+                  <input type="file" accept="image/*" style={{ display:"none" }}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) { setReplaceFloorFile(f); }
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
             </div>
           )}
 
@@ -363,27 +468,30 @@ export default function AdminStudioClient() {
                         {knownNodes.map(n => <option key={n} value={n} />)}
                       </datalist>
                     </div>
-                    <button onClick={() => handleAssignDevice(nodeInput.trim())} style={css.saveBtn}>
+                    <button
+                      onClick={() => handleAssignDevice(nodeInput.trim())}
+                      style={css.saveBtn}>
                       Assign
                     </button>
                   </div>
+                  {/* Current assignment status */}
                   {assignedDevice ? (
                     <div style={{ marginTop:"0.5rem", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:"0.4rem" }}>
                         <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 7px #22c55e", display:"inline-block" }}/>
-                        <span style={{ fontSize:"0.71rem", color:"#4ade80", fontWeight:600 }}>{assignedDevice.node}</span>
+                        <span style={{ fontSize:"0.71rem", color:"#4ade80", fontWeight:600 }}>
+                          {assignedDevice.node}
+                        </span>
                       </div>
                       <button
-                        onClick={() => handleAssignDevice("")}
+                        onClick={() => { handleAssignDevice(""); setNodeInput(""); }}
                         style={{ background:"none", border:"none", fontSize:"0.7rem", color:"#475569", cursor:"pointer", textDecoration:"underline" }}>
                         Unassign
                       </button>
                     </div>
                   ) : (
                     <p style={{ fontSize:"0.7rem", color:"#334155", marginTop:"0.4rem" }}>
-                      {knownNodes.length > 0
-                        ? "Select a node from the dropdown or type a new one."
-                        : "No nodes seen yet — make sure your ESP32 is sending to /ingest."}
+                      Type the node name from your ESP32 sketch. Known nodes appear as suggestions.
                     </p>
                   )}
                 </Card>
@@ -430,6 +538,53 @@ export default function AdminStudioClient() {
           <ModalFooter onCancel={() => setShowBuildingModal(false)} onConfirm={handleCreateBuilding}
             disabled={!newBuildingName.trim() || creatingBuilding}
             label={creatingBuilding ? "Creating…" : "Create Building"} />
+        </ModalShell>
+      )}
+
+      {showDeleteFloorModal && (
+        <ModalShell title="Delete Floor Plan" onClose={() => !deletingFloor && setShowDeleteFloorModal(false)}>
+          <p style={{ fontSize:"0.88rem", color:"#94a3b8", margin:"0 0 0.75rem" }}>
+            Are you sure you want to delete <strong style={{ color:"#f1f5f9" }}>{selectedFloorplan?.floor_name}</strong>?
+          </p>
+          <p style={{ fontSize:"0.82rem", color:"#ef4444", margin:"0 0 1rem" }}>
+            This will permanently delete all scan points and WiFi scan data on this floor. The floor plan image will also be removed.
+          </p>
+          <div style={{ display:"flex", gap:"0.75rem", justifyContent:"flex-end" }}>
+            <button onClick={() => setShowDeleteFloorModal(false)} disabled={deletingFloor}
+              style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#94a3b8", padding:"0.5rem 1rem", cursor:"pointer", fontSize:"0.85rem" }}>
+              Cancel
+            </button>
+            <button onClick={handleDeleteFloorplan} disabled={deletingFloor}
+              style={{ background: deletingFloor ? "#7f1d1d" : "#dc2626", border:"none", borderRadius:8, color:"#fff", padding:"0.5rem 1.25rem", cursor: deletingFloor ? "not-allowed" : "pointer", fontSize:"0.85rem", fontWeight:700 }}>
+              {deletingFloor ? "Deleting…" : "Delete Floor Plan"}
+            </button>
+          </div>
+        </ModalShell>
+      )}
+
+      {showDeleteBldgModal && (
+        <ModalShell
+          title="Delete Building"
+          onClose={() => !deletingBuilding && setShowDeleteBldgModal(false)}
+        >
+          <p style={{ fontSize: "0.88rem", color: "#94a3b8", margin: "0 0 0.75rem" }}>
+            Are you sure you want to delete <strong style={{ color: "#f1f5f9" }}>{selectedBuilding?.name}</strong>?
+          </p>
+          <p style={{ fontSize: "0.82rem", color: "#ef4444", margin: "0 0 1rem" }}>
+            This will permanently delete all floor plans, scan points, and WiFi scan data for this building. This cannot be undone.
+          </p>
+          <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
+            <button
+              onClick={() => setShowDeleteBldgModal(false)}
+              disabled={deletingBuilding}
+              style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#94a3b8", padding: "0.5rem 1rem", cursor: "pointer", fontSize: "0.85rem" }}
+            >Cancel</button>
+            <button
+              onClick={handleDeleteBuilding}
+              disabled={deletingBuilding}
+              style={{ background: deletingBuilding ? "#7f1d1d" : "#dc2626", border: "none", borderRadius: 8, color: "#fff", padding: "0.5rem 1.25rem", cursor: deletingBuilding ? "not-allowed" : "pointer", fontSize: "0.85rem", fontWeight: 700 }}
+            >{deletingBuilding ? "Deleting…" : "Delete Building"}</button>
+          </div>
         </ModalShell>
       )}
 
@@ -487,15 +642,7 @@ function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => voi
     <div style={{ display:"flex", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:9, padding:3, gap:2 }}>
       {(["edit","view"] as Mode[]).map(m => (
         <button key={m} onClick={() => onChange(m)}
-          style={{
-            padding: "0.28rem 0.875rem", borderRadius: 7,
-            borderWidth: 1, borderStyle: "solid", borderColor: "transparent",
-            cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
-            letterSpacing: "0.05em", textTransform: "capitalize", transition: "all 0.15s",
-            background: mode === m ? "#1d4ed8" : "transparent",
-            color: mode === m ? "#fff" : "#64748b",
-            boxShadow: mode === m ? "0 0 14px rgba(29,78,216,0.5)" : "none",
-          }}>
+          style={{ padding:"0.28rem 0.875rem", borderRadius:7, border:"none", cursor:"pointer", fontSize:"0.76rem", fontWeight:700, letterSpacing:"0.05em", textTransform:"capitalize", transition:"all 0.15s", background: mode === m ? "#1d4ed8" : "transparent", color: mode === m ? "#fff" : "#64748b", boxShadow: mode === m ? "0 0 14px rgba(29,78,216,0.5)" : "none" }}>
           {m}
         </button>
       ))}
@@ -584,7 +731,7 @@ const css: Record<string, React.CSSProperties> = {
   body:               { flex:1, display:"grid", gridTemplateColumns:"1fr 420px", overflow:"hidden" },
   leftPane:           { display:"flex", flexDirection:"column", overflow:"hidden", borderRight:"1px solid rgba(255,255,255,0.06)" },
   floorTabs:          { display:"flex", gap:3, padding:"0.45rem 1rem", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, overflowX:"auto" },
-  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, borderWidth:"1px", borderStyle:"solid", borderColor:"rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
+  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, border:"1px solid rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
   floorTabActive:     { borderColor:"#1d4ed8", background:"rgba(29,78,216,0.12)", color:"#60a5fa" },
   canvasArea:         { flex:1, padding:"1rem", overflow:"auto", display:"flex", flexDirection:"column" },
   breadcrumb:         { display:"flex", alignItems:"center", gap:"0.35rem", marginBottom:"0.75rem", flexShrink:0 },

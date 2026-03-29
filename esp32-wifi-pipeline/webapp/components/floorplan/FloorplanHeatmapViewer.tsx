@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { fetchFloorplanHeatmap } from "@/lib/api";
-import type { HeatmapPoint, WifiHistoryBucket } from "@/lib/api";
+import type { HeatmapPoint, WifiHistoryBucket, TimeRange } from "@/lib/api";
 
 interface Props {
   floorplanId: number;
@@ -30,9 +30,9 @@ const LEVEL_LABEL: Record<string, string> = {
 
 // ─── WiFi history fetch ───────────────────────────────────────────────────────
 
-async function fetchWifiHistory(pointId: number, minutes = 20): Promise<WifiHistoryBucket[]> {
+async function fetchWifiHistory(pointId: number, range: TimeRange = "20m"): Promise<WifiHistoryBucket[]> {
   const res = await fetch(
-    `${API_BASE}/scan-points/${pointId}/wifi-history?minutes=${minutes}`,
+    `${API_BASE}/scan-points/${pointId}/wifi-history?time_range=${range}`,
     { cache: "no-store" }
   );
   if (!res.ok) return [];
@@ -51,6 +51,7 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
   const [cardPos,     setCardPos]     = useState<{ top: number; left: number } | null>(null);
   const [chartOpen,   setChartOpen]   = useState(false);
   const [chartData,   setChartData]   = useState<WifiHistoryBucket[]>([]);
+  const [chartRange,  setChartRange]  = useState<TimeRange>("20m");
   const [chartLoading, setChartLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -99,13 +100,24 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
     setChartData([]);
   }
 
+  // Re-fetch when range changes (chart already open)
+  useEffect(() => {
+    if (!chartOpen || !activePoint) return;
+    setChartLoading(true);
+    fetchWifiHistory(activePoint.room_id, chartRange)
+      .then(setChartData)
+      .catch(console.error)
+      .finally(() => setChartLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartRange]);
+
   async function handleWifiSignalClick() {
     if (!activePoint) return;
     if (chartOpen) { setChartOpen(false); return; }
     setChartLoading(true);
     setChartOpen(true);
     try {
-      const data = await fetchWifiHistory(activePoint.room_id, 20);
+      const data = await fetchWifiHistory(activePoint.room_id, chartRange);
       setChartData(data);
     } catch (e) { console.error(e); }
     finally { setChartLoading(false); }
@@ -155,24 +167,20 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
               left: `${pt.x * 100}%`,
               top:  `${pt.y * 100}%`,
               transform: "translate(-50%, -50%)",
-              width:  isActive ? 52 : 40,
-              height: isActive ? 52 : 40,
+              // Large diffuse blob — radial gradient + multi-layer box-shadow
+              width:  isActive ? 110 : 88,
+              height: isActive ? 110 : 88,
               borderRadius: "50%",
-              background: `${color}${isActive ? "44" : "28"}`,
-              borderWidth: 2, borderStyle: "solid", borderColor: `${color}${isActive ? "cc" : "77"}`,
-              boxShadow: isActive ? `0 0 28px ${color}88` : `0 0 14px ${color}44`,
+              background: `radial-gradient(circle, ${color}55 0%, ${color}22 45%, transparent 70%)`,
+              boxShadow: isActive
+                ? `0 0 55px 28px ${color}55, 0 0 110px 55px ${color}22`
+                : `0 0 44px 22px ${color}44, 0 0 88px 44px ${color}18`,
+              border: "none",
               cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "all 0.18s",
+              transition: "all 0.2s ease",
               zIndex: isActive ? 20 : 10,
             }}
-          >
-            <div style={{
-              width: isActive ? 10 : 8, height: isActive ? 10 : 8,
-              borderRadius: "50%", background: color,
-              boxShadow: `0 0 8px ${color}`, transition: "all 0.18s",
-            }} />
-          </div>
+          />
         );
       })}
 
@@ -386,8 +394,8 @@ function SignalTrendChart({ data, color }: { data: WifiHistoryBucket[]; color: s
                 width: "100%",
                 height: barHeight,
                 background: bucket.count === 0
-                  ? "rgba(255,255,255,0.04)"
-                  : isHovered ? `${barColor}ff` : `${barColor}bb`,
+                  ? "rgba(255,255,255,0.08)"
+                  : isHovered ? `${barColor}` : `${barColor}dd`,
                 borderRadius: "2px 2px 0 0",
                 transition: "height 0.2s ease, background 0.15s",
                 marginTop: BAR_H - barHeight,
@@ -469,7 +477,7 @@ function SignalTrendChart({ data, color }: { data: WifiHistoryBucket[]; color: s
           </div>
         ))}
         <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-          <div style={{ width: 6, height: 6, borderRadius: 1, background: "rgba(255,255,255,0.04)", borderWidth: 1, borderStyle: "solid", borderColor: "rgba(255,255,255,0.08)" }} />
+          <div style={{ width: 6, height: 6, borderRadius: 1, background: "rgba(255,255,255,0.1)", borderWidth: 1, borderStyle: "solid", borderColor: "rgba(255,255,255,0.08)" }} />
           <span style={{ fontSize: "0.6rem", color: "#334155" }}>no data</span>
         </div>
       </div>

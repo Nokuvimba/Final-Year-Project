@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import Link from "next/link";
 import ScanPointCanvas from "@/components/floorplan/ScanPointCanvas";
 import FloorplanHeatmapViewer from "@/components/floorplan/FloorplanHeatmapViewer";
+import UserHeatmapViewer from "@/components/floorplan/UserHeatmapViewer";
 import {
   fetchBuildings,
   fetchBuildingFloorPlans,
@@ -315,7 +317,7 @@ export default function AdminStudioClient() {
             <button
               onClick={() => setShowDeleteBldgModal(true)}
               title={`Delete ${selectedBuilding.name}`}
-              style={{ background:"none", border:"1px solid rgba(239,68,68,0.3)", cursor:"pointer", color:"#ef4444", fontSize:"0.75rem", padding:"0.28rem 0.6rem", borderRadius:6, lineHeight:1, transition:"all 0.15s", whiteSpace:"nowrap" }}
+              style={{ background:"none", borderWidth:1, borderStyle:"solid", borderColor:"rgba(239,68,68,0.3)", cursor:"pointer", color:"#ef4444", fontSize:"0.75rem", padding:"0.28rem 0.6rem", borderRadius:6, lineHeight:1, transition:"all 0.15s", whiteSpace:"nowrap" }}
               onMouseEnter={e => { e.currentTarget.style.background="rgba(239,68,68,0.12)"; e.currentTarget.style.borderColor="rgba(239,68,68,0.6)"; }}
               onMouseLeave={e => { e.currentTarget.style.background="none"; e.currentTarget.style.borderColor="rgba(239,68,68,0.3)"; }}
             >🗑 Delete Building</button>
@@ -329,7 +331,7 @@ export default function AdminStudioClient() {
       </header>
 
       {/* ── BODY ────────────────────────────────────────────────────────── */}
-      <div style={css.body}>
+      <div style={mode === "view" ? css.bodyViewMode : css.body}>
 
         {/* LEFT — canvas */}
         <div style={css.leftPane}>
@@ -340,7 +342,7 @@ export default function AdminStudioClient() {
               {floorplans.map(fp => (
                 <div key={fp.id} style={{ display:"flex", alignItems:"center", gap:2 }}>
                   <button onClick={() => doSelectFloorplan(fp)}
-                    style={{ ...css.floorTab, ...(selectedFloorplan?.id === fp.id ? css.floorTabActive : {}), borderTopRightRadius:0, borderBottomRightRadius:0, borderRight:"none" }}>
+                    style={{ ...css.floorTab, ...(selectedFloorplan?.id === fp.id ? css.floorTabActive : {}), borderTopRightRadius:0, borderBottomRightRadius:0, borderRightWidth:0 }}>
                     {fp.floor_name}
                   </button>
                   <button
@@ -393,16 +395,19 @@ export default function AdminStudioClient() {
                 onPointDeleted={id => { setScanPoints(p => p.filter(x => x.id !== id)); setSelectedPoint(null); }}
               />
             ) : (
-              <FloorplanHeatmapViewer
+              <UserHeatmapViewer
                 floorplanId={selectedFloorplan.id}
                 floorplanImageUrl={getImageUrl(selectedFloorplan.image_url)}
-                readOnly={true}
+                buildingName={selectedBuilding?.name ?? ""}
+                floorName={selectedFloorplan.floor_name}
+                dark={true}
               />
             )}
           </div>
         </div>
 
-        {/* RIGHT — detail panel */}
+        {/* RIGHT — detail panel (edit mode only — view mode uses UserHeatmapViewer's own panel) */}
+        {mode === "edit" && (
         <aside style={css.rightPane}>
           <div style={{ flex:1, overflowY:"auto", padding:"1rem" }}>
 
@@ -526,6 +531,7 @@ export default function AdminStudioClient() {
             </span>
           </div>
         </aside>
+        )}
       </div>
 
       {/* ── MODALS ──────────────────────────────────────────────────────── */}
@@ -615,7 +621,7 @@ export default function AdminStudioClient() {
 
 function Logo() {
   return (
-    <div style={{ display:"flex", alignItems:"center", gap:"0.6rem" }}>
+    <Link href="/" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "0.6rem" }}>
       <div style={{ width:32, height:32, borderRadius:9, background:"linear-gradient(135deg,#1d4ed8,#3b82f6)", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 0 18px rgba(59,130,246,0.45)", flexShrink:0 }}>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <circle cx="8" cy="8" r="2" fill="white"/>
@@ -624,7 +630,7 @@ function Logo() {
         </svg>
       </div>
       <span style={{ fontWeight:700, fontSize:"0.875rem", letterSpacing:"0.06em", color:"#f1f5f9" }}>Map Studio</span>
-    </div>
+    </Link>
   );
 }
 
@@ -729,9 +735,10 @@ const css: Record<string, React.CSSProperties> = {
   dropdownSub:        { fontSize:"0.72rem", color:"#64748b", marginTop:2 },
   adminBadge:         { fontSize:"0.7rem", padding:"0.22rem 0.6rem", borderRadius:100, background:"rgba(29,78,216,0.15)", border:"1px solid rgba(29,78,216,0.3)", color:"#60a5fa", fontWeight:700, letterSpacing:"0.07em" },
   body:               { flex:1, display:"grid", gridTemplateColumns:"1fr 420px", overflow:"hidden" },
+  bodyViewMode:       { flex:1, display:"grid", gridTemplateColumns:"1fr",       overflow:"hidden" },
   leftPane:           { display:"flex", flexDirection:"column", overflow:"hidden", borderRight:"1px solid rgba(255,255,255,0.06)" },
   floorTabs:          { display:"flex", gap:3, padding:"0.45rem 1rem", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0, overflowX:"auto" },
-  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, border:"1px solid rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
+  floorTab:           { padding:"0.28rem 0.875rem", borderRadius:7, borderWidth:1, borderStyle:"solid", borderColor:"rgba(255,255,255,0.08)", background:"transparent", color:"#64748b", fontSize:"0.78rem", fontWeight:600, cursor:"pointer", whiteSpace:"nowrap", transition:"all 0.15s" },
   floorTabActive:     { borderColor:"#1d4ed8", background:"rgba(29,78,216,0.12)", color:"#60a5fa" },
   canvasArea:         { flex:1, padding:"1rem", overflow:"auto", display:"flex", flexDirection:"column" },
   breadcrumb:         { display:"flex", alignItems:"center", gap:"0.35rem", marginBottom:"0.75rem", flexShrink:0 },

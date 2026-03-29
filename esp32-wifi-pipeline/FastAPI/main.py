@@ -189,23 +189,24 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
 @app.get("/scan-points/{point_id}/wifi-history")
 def get_scan_point_wifi_history(
     point_id: int,
-    minutes: int = Query(default=20, ge=1, le=60),
+    time_range: str = Query(default="20m", pattern="^(20m|1h|6h|24h|7d)$"),
     db: Session = Depends(get_db),
 ):
     """
-    Returns WiFi scan history bucketed by minute for a specific scan point.
+    Returns WiFi scan history bucketed by time period for a specific scan point.
 
-    Each bucket contains:
-      - minute_ago : how many minutes ago (0 = most recent minute)
-      - count      : number of wifi_scan rows received in that minute
-                     This is the "busyness" — how many network readings
-                     the ESP32 sent in that period. One ESP32 scan cycle
-                     typically produces 10–15 rows (one per SSID found).
-      - avg_rssi   : average signal strength across all rows in that minute
-      - level      : signal level derived from avg_rssi
-                     (strong / medium / low / weak / null)
+    range param controls both the lookback window and bucket size:
+      20m  → last 20 minutes,  1-minute  buckets (20 buckets)
+      1h   → last 1 hour,      1-minute  buckets (60 buckets)
+      6h   → last 6 hours,     10-minute buckets (36 buckets)
+      24h  → last 24 hours,    1-hour    buckets (24 buckets)
+      7d   → last 7 days,      6-hour    buckets (28 buckets)
 
-    Buckets with count=0 and avg_rssi=null mean no scans arrived that minute.
+    Each bucket:
+      label    : human-readable period label, e.g. "19m", "5h", "3d"
+      count    : scan rows received in that period (busyness)
+      avg_rssi : average signal strength, null if no scans
+      level    : strong / medium / low / weak / null
     """
     point = db.get(ScanPointDB, point_id)
     if not point:
@@ -213,8 +214,32 @@ def get_scan_point_wifi_history(
 
     from datetime import datetime, timedelta, timezone
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=minutes)
+    # ── Range config ────────────────────────────────────────────────────────
+    RANGE_CONFIG = {
+        "20m": {"total_minutes": 20,        "bucket_minutes": 1,   "n_buckets": 20},
+        "1h":  {"total_minutes": 60,        "bucket_minutes": 1,   "n_buckets": 60},
+        "6h":  {"total_minutes": 360,       "bucket_minutes": 10,  "n_buckets": 36},
+        "24h": {"total_minutes": 1440,      "bucket_minutes": 60,  "n_buckets": 24},
+        "7d":  {"total_minutes": 7 * 1440,  "bucket_minutes": 360, "n_buckets": 28},
+    }
+    cfg            = RANGE_CONFIG[time_range]
+    total_minutes  = cfg["total_minutes"]
+    bucket_minutes = cfg["bucket_minutes"]
+    n_buckets      = cfg["n_buckets"]
+
+    def _bucket_label(bucket_index: int) -> str:
+        """Human-readable label for the oldest end of this bucket."""
+        periods_ago = n_buckets - 1 - bucket_index
+        minutes_ago = periods_ago * bucket_minutes
+        if bucket_minutes < 60:
+            return f"{minutes_ago}m"
+        elif bucket_minutes < 1440:
+            return f"{minutes_ago // 60}h"
+        else:
+            return f"{minutes_ago // 1440}d"
+
+    now    = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=total_minutes)
 
     rows = (
         db.query(WifiScanDB)
@@ -226,39 +251,43 @@ def get_scan_point_wifi_history(
         .all()
     )
 
-    # Build minute buckets: bucket 0 = oldest, bucket (minutes-1) = most recent
+    # Build buckets: index 0 = oldest, index (n_buckets-1) = most recent
     buckets: dict[int, dict] = {
-        i: {"minute_ago": minutes - 1 - i, "count": 0, "rssi_sum": 0.0, "rssi_n": 0}
-        for i in range(minutes)
+        i: {"label": _bucket_label(i), "count": 0, "rssi_sum": 0.0, "rssi_n": 0}
+        for i in range(n_buckets)
     }
 
     for row in rows:
         ts = row.received_at
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        delta_minutes = int((now - ts).total_seconds() // 60)
-        bucket_index = minutes - 1 - delta_minutes
-        if 0 <= bucket_index < minutes:
+        delta_minutes = (now - ts).total_seconds() / 60
+        # Which bucket does this row fall into?
+        # Bucket 0 = [total_minutes ago, total_minutes-bucket_minutes ago)
+        bucket_index = int((total_minutes - delta_minutes) / bucket_minutes)
+        if 0 <= bucket_index < n_buckets:
             buckets[bucket_index]["count"] += 1
             if row.rssi is not None:
                 buckets[bucket_index]["rssi_sum"] += row.rssi
                 buckets[bucket_index]["rssi_n"]   += 1
 
     result = []
-    for i in range(minutes):
+    for i in range(n_buckets):
         b = buckets[i]
         avg_rssi = round(b["rssi_sum"] / b["rssi_n"], 1) if b["rssi_n"] > 0 else None
         result.append({
-            "minute_ago": b["minute_ago"],
-            "count":      b["count"],
-            "avg_rssi":   avg_rssi,
-            "level":      _signal_level(avg_rssi),
+            "label":    b["label"],
+            "count":    b["count"],
+            "avg_rssi": avg_rssi,
+            "level":    _signal_level(avg_rssi),
         })
 
     return {
         "scan_point_id": point_id,
         "label":         point.label,
-        "minutes":       minutes,
+        "range":         time_range,
+        "bucket_minutes": bucket_minutes,
+        "n_buckets":     n_buckets,
         "total_scans":   sum(b["count"] for b in result),
         "buckets":       result,
     }

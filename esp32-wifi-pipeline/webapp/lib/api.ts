@@ -255,11 +255,6 @@ export async function clearDevicePoint(node: string): Promise<void> {
     await fetch(`${API_BASE}/devices/${encodeURIComponent(node)}/clear-point`, { method: "POST" })
   );
 }
-export async function fetchKnownNodes(): Promise<string[]> {
-  const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
-  const data = await handleJson<{ nodes: string[] }>(res);
-  return data.nodes ?? [];
-}
 
 
 // ── Scans ──────────────────────────────────────────────────────────────────────
@@ -338,6 +333,20 @@ export async function replaceFloorPlanImage(floorplanId: number, file: File): Pr
   return data.floorplan;
 }
 
+
+// ── Devices — Known Nodes ──────────────────────────────────────────────────────
+// Returns all node names ever seen — both currently assigned nodes AND any node
+// that has ever sent data to /ingest. Used to populate the device assignment
+// dropdown in the admin studio so a new ESP32 appears as soon as it sends its
+// first scan, before any manual assignment is made.
+
+export async function fetchKnownNodes(): Promise<string[]> {
+  const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
+  const data = await handleJson<{ nodes: string[] }>(res);
+  return data.nodes ?? [];
+}
+
+
 // ── WiFi Signal History ────────────────────────────────────────────────────────
 // Returns scan activity bucketed by minute for a specific scan point.
 // Used by the signal trend bar chart in the sensor card (admin studio + user viewer).
@@ -350,27 +359,39 @@ export async function replaceFloorPlanImage(floorplanId: number, file: File): Pr
 
 export type SignalLevel = "strong" | "medium" | "low" | "weak" | null;
 
+// range: "20m" | "1h" | "6h" | "24h" | "7d"
+// Bucket sizes per range:
+//   20m → 1-min buckets (20)  |  1h → 1-min buckets (60)
+//   6h  → 10-min buckets (36) |  24h → 1-hr buckets (24)
+//   7d  → 6-hr buckets (28)
+// label: human-readable period label e.g. "19m", "5h", "3d"
+// count: scan rows that arrived in that period (busyness indicator)
+
+export type TimeRange = "20m" | "1h" | "6h" | "24h" | "7d";
+
 export type WifiHistoryBucket = {
-  minute_ago: number;
-  count: number;
-  avg_rssi: number | null;
+  label: string;           // e.g. "19m", "5h", "3d" — oldest end of bucket
+  count: number;           // scan rows received — the busyness value
+  avg_rssi: number | null; // null when count is 0
   level: SignalLevel;
 };
 
 export type WifiHistoryResponse = {
   scan_point_id: number;
   label: string | null;
-  minutes: number;
+  range: TimeRange;
+  bucket_minutes: number;
+  n_buckets: number;
   total_scans: number;
   buckets: WifiHistoryBucket[];
 };
 
 export async function fetchWifiHistory(
   scanPointId: number,
-  minutes = 20
+  range: TimeRange = "20m"
 ): Promise<WifiHistoryBucket[]> {
   const res = await fetch(
-    `${API_BASE}/scan-points/${scanPointId}/wifi-history?minutes=${minutes}`,
+    `${API_BASE}/scan-points/${scanPointId}/wifi-history?time_range=${range}`,
     { cache: "no-store" }
   );
   const data = await handleJson<WifiHistoryResponse>(res);

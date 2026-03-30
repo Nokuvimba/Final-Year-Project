@@ -10,7 +10,7 @@ load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://wifiuser:Password@localhost/wifi_db"
+    "postgresql+psycopg2://mssia_user:Password@localhost/mssia_db"
 )
 
 SQL_ECHO = os.getenv("SQL_ECHO", "false").lower() == "true"

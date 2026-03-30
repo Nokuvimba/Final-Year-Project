@@ -2,8 +2,8 @@
 import psycopg2, pandas as pd
 
 conn = psycopg2.connect(
-    host="localhost", dbname="wifi_db",
-    user="wifiuser", password="Password"
+    host="localhost", dbname="mssia_db",
+    user="mssia_user", password="Password"
 )
 
 sql = """

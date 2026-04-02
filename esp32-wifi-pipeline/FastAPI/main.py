@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 import math, os, uuid
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,39 +53,58 @@ def health():
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
 #
-# ESP32 sends batches of scan objects here.
-# We look up scan_point directly by assigned_node and stamp scan_point_id.
-# No sessions, no room_id written here.
+# POST /ingest — receives sensor data from ESP32 (or any HTTP client).
+#
+# Expected payload:
+#   { "node": "esp32-a", "scans": [ { "ssid": "...", "bssid": "...", "rssi": -65, "channel": 6, "enc": "WPA2" } ] }
+#
+# Security: the node name must match an assigned_node on a scan_point record.
+#   Unknown nodes are rejected with 403. This prevents bots or unknown devices
+#   from inserting fake data — only nodes the admin has assigned are accepted.
+#
+# Timestamps: received_at is stamped by the server (datetime.now UTC).
+#   The ESP32 does NOT need to send a timestamp — millis() is unreliable anyway.
 
-@app.post("/ingest", include_in_schema=False)
+@app.post("/ingest")
 def ingest(
-    scans: List[Dict[str, Any]] = Body(...),
+    payload: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
-    if not isinstance(scans, list) or not scans:
-        raise HTTPException(status_code=400, detail="Payload must be a non-empty array")
+    node = payload.get("node")
+    scans = payload.get("scans", [])
 
-    # Cache scan_point lookups within this batch.
-    # Query scan_point directly by assigned_node — no separate active_point table.
-    point_cache: Dict[str, Optional[int]] = {}
+    # ── Validation ────────────────────────────────────────────────────────────
+    if not node:
+        raise HTTPException(status_code=400, detail="Missing 'node' field in payload")
+
+    if not isinstance(scans, list) or not scans:
+        raise HTTPException(status_code=400, detail="Missing or empty 'scans' array in payload")
+
+    # ── Node validation (security) ────────────────────────────────────────────
+    # Reject any node name not already assigned to a scan_point by the admin.
+    # This prevents unknown devices or bots from inserting data.
+    known = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
+    if not known:
+        raise HTTPException(status_code=403, detail="Unassigned")
+
+    # ── Stamp server-side timestamp once for this batch ───────────────────────
+    # All rows in this batch share the same received_at (the moment the POST arrived).
+    # The ESP32 does not need to send a timestamp — server time is reliable.
+    server_now = datetime.now(timezone.utc)
+
+    scan_point_id = known.id  # already resolved above
     accepted = 0
 
     for s in scans:
-        node = s.get("node")
-
-        if node not in point_cache:
-            point = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
-            point_cache[node] = point.id if point else None
-
         row = WifiScanDB(
-            node=node,
-            device_ts_ms=s.get("ts"),
-            ssid=s.get("ssid"),
-            bssid=s.get("bssid"),
-            rssi=s.get("rssi"),
-            channel=s.get("channel"),
-            enc=s.get("enc"),
-            scan_point_id=point_cache.get(node),   # coordinate stamped here
+            node          = node,
+            ssid          = s.get("ssid"),
+            bssid         = s.get("bssid"),
+            rssi          = s.get("rssi"),
+            channel       = s.get("channel"),
+            enc           = s.get("enc"),
+            received_at   = server_now,   # server adds the real UTC timestamp
+            scan_point_id = scan_point_id,
         )
         db.add(row)
         try:
@@ -95,7 +115,14 @@ def ingest(
             continue
 
     db.commit()
-    return {"accepted": accepted, "total": len(scans)}
+    return {
+        "status":        "Assigned",
+        "accepted":      accepted,
+        "total":         len(scans),
+        "node":          node,
+        "scan_point_id": scan_point_id,
+        "received_at":   server_now.isoformat(),
+    }
 
 
 # ── Scan Points ───────────────────────────────────────────────────────────────

@@ -11,12 +11,12 @@
 const char* WIFI_SSID     =  "Three_7F2C30"; //"ATU-Galway-Guest-Aruba";//"Talie";  //"Three_7F2C30";
 const char* WIFI_PASSWORD =   "5sQuXs2zv22y2z5";// "225299";//"N7talie123"; //"5sQuXs2zv22y2z5";
 
-// My FastAPI endpoint using the laptop’s LAN IP
+// My FastAPI endpoint using the laptop's LAN IP
 const char* INGEST_URL    = "http://192.168.0.6:8000/ingest"; //Home
 //const char* INGEST_URL = "http://172.20.10.5:8000/ingest"; //ATU
 
-
-// Tag to identify which ESP32 sent the scan
+// Tag to identify which ESP32 sent the scan.
+// Must match an assigned_node in the Admin Map Studio — unknown nodes are rejected.
 const char* NODE_TAG      = "ESP32-LAB-01";
 
 // FUNCTION DECLARATIONS
@@ -81,29 +81,44 @@ int httpPostPayload(const String& payload) {
 }
 
 // ===========================================================
-// BUILD JSON ARRAY FROM SCAN RESULTS + SEND TO SERVER
+// BUILD JSON PAYLOAD FROM SCAN RESULTS + SEND TO SERVER
+//
+// Payload format (matches FastAPI /ingest endpoint):
+// {
+//   "node": "ESP32-LAB-01",
+//   "scans": [
+//     { "ssid": "ATU-WiFi", "bssid": "aa:bb:cc:dd:ee:ff",
+//       "rssi": -65, "channel": 6, "enc": 4 }
+//   ]
+// }
+//
+// NOTE: No timestamp sent from the ESP32.
+// The server stamps received_at = datetime.now(UTC) when the POST arrives.
+// millis() is unreliable (resets on reboot, not a real clock).
 // ===========================================================
 void postScannedNetworks(int16_t networksFound) {
   if (networksFound <= 0) return;
 
   StaticJsonDocument<4096> doc;
-  JsonArray arr = doc.to<JsonArray>();
 
-  uint32_t ts = millis();
+  // Top-level fields
+  doc["node"] = NODE_TAG;
+
+  // Scans array — one object per SSID found
+  JsonArray scans = doc.createNestedArray("scans");
 
   for (int i = 0; i < networksFound; ++i) {
-    JsonObject o = arr.createNestedObject();
-    o["node"]    = NODE_TAG;
-    o["ts"]      = ts;
+    JsonObject o = scans.createNestedObject();
     o["ssid"]    = WiFi.SSID(i);
     o["bssid"]   = WiFi.BSSIDstr(i);
     o["rssi"]    = WiFi.RSSI(i);
     o["channel"] = WiFi.channel(i);
     o["enc"]     = WiFi.encryptionType(i);
+    // NOTE: "ts" (millis) intentionally removed — server adds real UTC timestamp
   }
 
   String payload;
-  serializeJson(arr, payload);
+  serializeJson(doc, payload);
   httpPostPayload(payload);
 
   WiFi.scanDelete();  // clear results

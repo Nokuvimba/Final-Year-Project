@@ -400,3 +400,30 @@ export async function fetchWifiHistory(
   const data = await handleJson<WifiHistoryResponse>(res);
   return data.buckets ?? [];
 }
+
+// ─── Temperature / Humidity ───────────────────────────────────────────────────
+
+export type Dht22Reading = {
+  received_at:   string;   // ISO UTC timestamp
+  temperature_c: number;   // degrees Celsius
+  humidity_pct:  number;   // relative humidity %
+};
+
+export type TemperatureHistoryResponse = {
+  scan_point_id: number;
+  time_range:    string;
+  count:         number;
+  readings:      Dht22Reading[];
+};
+
+export async function fetchDht22History(
+  scanPointId: number,
+  time_range: string = "24h"
+): Promise<Dht22Reading[]> {
+  const res = await fetch(
+    `${API_BASE}/scan-points/${scanPointId}/dht22-history?time_range=${time_range}`,
+    { cache: "no-store" }
+  );
+  const data = await handleJson<TemperatureHistoryResponse>(res);
+  return data.readings ?? [];
+}

@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <DHTesp.h> 
 
 // ===========================================================
 // CONFIGURATION SECTION
@@ -18,6 +19,14 @@ const char* INGEST_URL    = "http://192.168.0.6:8000/ingest"; //Home
 // Tag to identify which ESP32 sent the scan.
 // Must match an assigned_node in the Admin Map Studio — unknown nodes are rejected.
 const char* NODE_TAG      = "ESP32-LAB-01";
+
+// DHT22 data pin
+const int   DHT_PIN       = 4;   // GPIO 4
+
+// ===========================================================
+// GLOBALS
+// ===========================================================
+DHTesp dht;
 
 // FUNCTION DECLARATIONS
 // ===========================================================
@@ -117,6 +126,17 @@ void postScannedNetworks(int16_t networksFound) {
     // NOTE: "ts" (millis) intentionally removed — server adds real UTC timestamp
   }
 
+  // DHT22 reading — only add temperature block if sensor returns valid data
+  TempAndHumidity data = dht.getTempAndHumidity();
+  if (!isnan(data.temperature) && !isnan(data.humidity)) {
+    JsonObject temp    = doc.createNestedObject("temperature");
+    temp["temperature_c"] = data.temperature;
+    temp["humidity_pct"]  = data.humidity;
+    Serial.printf("Temp: %.1f C  Humidity: %.1f%%\n", data.temperature, data.humidity);
+  } else {
+    Serial.println("DHT22 read failed — sending WiFi only this cycle");
+  }
+
   String payload;
   serializeJson(doc, payload);
   httpPostPayload(payload);
@@ -130,6 +150,10 @@ void postScannedNetworks(int16_t networksFound) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  // Initialise DHT22
+  dht.setup(DHT_PIN, DHTesp::DHT22);
+  Serial.printf("DHT22 on GPIO %d\n", DHT_PIN);
 
   connectWiFi();      // connect to Wi-Fi first
   startWiFiScan();    // start initial scan

@@ -12,6 +12,44 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // ─── Signal level config ──────────────────────────────────────────────────────
 
+// ── Timestamp helpers ────────────────────────────────────────────────────────
+
+// Format an ISO UTC string to a human-readable local time
+// e.g. "2026-03-30T14:32:05.000Z" → "30 Mar 2026, 14:32:05"
+function formatTimestamp(iso: string | null): string {
+  if (!iso) return "No data";
+  const d = new Date(iso);
+  const day   = d.toLocaleDateString("en-IE", { day: "2-digit", month: "short", year: "numeric" });
+  const time  = d.toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return `${day}, ${time}`;
+}
+
+// Format bucket_start ISO for chart tooltip — shorter format
+// e.g. "2026-03-30T14:32:05.000Z" → "30 Mar 14:32"
+function formatBucketTime(iso: string | null, range: TimeRange): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (range === "7d") {
+    // Show day + month for long range
+    return d.toLocaleDateString("en-IE", { day: "2-digit", month: "short" });
+  }
+  // Show HH:MM for short/medium ranges
+  return d.toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+// Format bucket_start for chart x-axis label
+function formatXAxisLabel(iso: string | null, range: TimeRange): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (range === "7d") {
+    return d.toLocaleDateString("en-IE", { weekday: "short", day: "numeric" }); // "Mon 28"
+  }
+  if (range === "24h" || range === "6h") {
+    return d.toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", hour12: false }); // "14:00"
+  }
+  return d.toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", hour12: false }); // "14:32"
+}
+
 const LEVEL: Record<string, { color: string; label: string }> = {
   strong: { color: "#3b82f6", label: "Strong" },
   medium: { color: "#f59e0b", label: "Med"    },
@@ -85,6 +123,20 @@ export default function UserHeatmapViewer({
   const [activeTab,    setActiveTab]    = useState<Tab>("overview");
   const [history,      setHistory]      = useState<WifiHistoryBucket[]>([]);
   const [histLoading,  setHistLoading]  = useState(false);
+
+  // Derive last scan time from history (fresher than heatmap data which loads once)
+  // Find the most recent bucket that has at least one scan
+  const lastScanAt: string | null = history.length > 0
+    ? (() => {
+        // buckets are ordered oldest→newest, so iterate in reverse
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i].count > 0 && history[i].bucket_start) {
+            return history[i].bucket_start;
+          }
+        }
+        return activePoint?.last_scan_at ?? null; // fall back to heatmap value
+      })()
+    : activePoint?.last_scan_at ?? null;
   const [chartRange,   setChartRange]   = useState<TimeRange>("20m");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -338,12 +390,24 @@ export default function UserHeatmapViewer({
                   ))}
                 </div>
 
-                {/* Device status */}
-                <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                  <span style={{ fontSize: "0.78rem" }}>🕐</span>
-                  <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
-                    {activePoint.assigned_node ? `Device: ${activePoint.assigned_node}` : "No device assigned"}
-                  </span>
+                {/* Device + last scan timestamp */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <span style={{ fontSize: "0.78rem" }}>🔌</span>
+                    <span style={{ fontSize: "0.72rem", color: T.deviceCol }}>
+                      {activePoint.assigned_node ? `Device: ${activePoint.assigned_node}` : "No device assigned"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <span style={{ fontSize: "0.78rem" }}>🕐</span>
+                    <span style={{ fontSize: "0.72rem", color: T.deviceCol }}>
+                      {lastScanAt
+                        ? `Last scan: ${formatTimestamp(lastScanAt)}`
+                        : histLoading
+                          ? "Loading…"
+                          : "No scans recorded yet"}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -378,6 +442,7 @@ export default function UserHeatmapViewer({
                     tooltipLabel="signals"
                     yAxisLabel=""
                     tokens={T}
+                    chartRange={chartRange}
                   />
                 )}
               </div>
@@ -456,13 +521,14 @@ function MetricCard({ icon, iconBg, iconColor, label, labelColor, value, valueCo
 // LightLineChart — SVG line chart for signal trend, light background
 // ═════════════════════════════════════════════════════════════════════════════
 
-function LightLineChart({ data, color, yKey, tooltipLabel, tokens }: {
+function LightLineChart({ data, color, yKey, tooltipLabel, tokens, chartRange }: {
   data: WifiHistoryBucket[];
   color: string;
   yKey: keyof WifiHistoryBucket;
   tooltipLabel: string;
   yAxisLabel: string;
   tokens: TokenMap;
+  chartRange: TimeRange;
 }) {
   const T = tokens;
   const [tooltip, setTooltip] = useState<{ x: number; y: number; bucket: WifiHistoryBucket } | null>(null);
@@ -541,7 +607,7 @@ function LightLineChart({ data, color, yKey, tooltipLabel, tokens }: {
           const x = PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2);
           return (
             <text key={i} x={x} y={H - 2} textAnchor="middle" fill="#9ca3af" fontSize={9} fontFamily="monospace">
-              {d.label}
+              {d.bucket_start ? formatXAxisLabel(d.bucket_start, chartRange) : d.label}
             </text>
           );
         })}
@@ -564,9 +630,16 @@ function LightLineChart({ data, color, yKey, tooltipLabel, tokens }: {
           whiteSpace: "nowrap",
           zIndex: 10,
         }}>
-          <span style={{ color: T.tooltipSubCol }}>{tooltip.bucket.label} ago</span>
+          <span style={{ color: T.tooltipSubCol }}>
+            {tooltip.bucket.bucket_start
+              ? formatBucketTime(tooltip.bucket.bucket_start, chartRange)
+              : tooltip.bucket.label + " ago"}
+          </span>
           <br />
           <span style={{ color, fontWeight: 700 }}>{tooltipLabel}: {String(tooltip.bucket[yKey] ?? "—")}</span>
+          {tooltip.bucket.avg_rssi != null && (
+            <><br /><span style={{ color: T.tooltipSubCol }}>{tooltip.bucket.avg_rssi} dBm</span></>
+          )}
         </div>
       )}
     </div>

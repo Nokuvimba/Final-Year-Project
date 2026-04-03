@@ -265,6 +265,12 @@ def get_scan_point_wifi_history(
         else:
             return f"{minutes_ago // 1440}d"
 
+    def _bucket_start_iso(bucket_index: int) -> str:
+        """ISO timestamp for the start of this bucket (UTC)."""
+        periods_ago = n_buckets - 1 - bucket_index
+        bucket_start = now - timedelta(minutes=(periods_ago + 1) * bucket_minutes)
+        return bucket_start.isoformat()
+
     now    = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=total_minutes)
 
@@ -303,10 +309,11 @@ def get_scan_point_wifi_history(
         b = buckets[i]
         avg_rssi = round(b["rssi_sum"] / b["rssi_n"], 1) if b["rssi_n"] > 0 else None
         result.append({
-            "label":    b["label"],
-            "count":    b["count"],
-            "avg_rssi": avg_rssi,
-            "level":    _signal_level(avg_rssi),
+            "label":        b["label"],
+            "bucket_start": _bucket_start_iso(i),   # ISO UTC timestamp for this bucket
+            "count":        b["count"],
+            "avg_rssi":     avg_rssi,
+            "level":        _signal_level(avg_rssi),
         })
 
     return {
@@ -746,6 +753,7 @@ def get_floorplan_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
             ScanPointDB.assigned_node,
             func.avg(WifiScanDB.rssi).label("avg_rssi"),
             func.count(WifiScanDB.id).label("samples"),
+            func.max(WifiScanDB.received_at).label("last_scan_at"),
         )
         .outerjoin(WifiScanDB, WifiScanDB.scan_point_id == ScanPointDB.id)
         .filter(ScanPointDB.floorplan_id == floorplan_id)
@@ -763,6 +771,7 @@ def get_floorplan_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
             level=_signal_level(float(row.avg_rssi) if row.avg_rssi else None),
             samples=row.samples or 0,
             assigned_node=row.assigned_node,
+            last_scan_at=row.last_scan_at.isoformat() if row.last_scan_at else None,
         )
         for row in result
     ]

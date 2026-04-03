@@ -79,6 +79,8 @@ export type HeatmapPoint = {
   avg_rssi: number | null;
   level: "strong" | "medium" | "low" | "weak" | null;
   samples: number;
+  assigned_node: string | null;
+  last_scan_at: string | null; // ISO UTC timestamp of most recent scan at this point
 };
 
 export type WifiScan = {
@@ -371,6 +373,7 @@ export type TimeRange = "20m" | "1h" | "6h" | "24h" | "7d";
 
 export type WifiHistoryBucket = {
   label: string;           // e.g. "19m", "5h", "3d" — oldest end of bucket
+  bucket_start: string;    // ISO UTC timestamp for the start of this bucket
   count: number;           // scan rows received — the busyness value
   avg_rssi: number | null; // null when count is 0
   level: SignalLevel;

@@ -420,8 +420,11 @@ export async function fetchDht22History(
   scanPointId: number,
   time_range: string = "24h"
 ): Promise<Dht22Reading[]> {
+  // Uses FastAPI directly (not the Next.js /api proxy) — same pattern as
+  // the inline fetches in UserHeatmapViewer which are confirmed working.
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const res = await fetch(
-    `${API_BASE}/scan-points/${scanPointId}/dht22-history?time_range=${time_range}`,
+    `${base}/scan-points/${scanPointId}/dht22-history?time_range=${time_range}`,
     { cache: "no-store" }
   );
   const data = await handleJson<TemperatureHistoryResponse>(res);

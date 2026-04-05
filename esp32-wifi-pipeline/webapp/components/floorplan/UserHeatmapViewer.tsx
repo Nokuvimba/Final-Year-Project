@@ -163,6 +163,16 @@ export default function UserHeatmapViewer({
       .finally(() => setHistLoading(false));
   }, [activePoint?.room_id, chartRange]);
 
+  // Load DHT22 history when a point is selected or temp range changes
+  useEffect(() => {
+    if (!activePoint) return;
+    setTempLoading(true);
+    fetchDht22History(activePoint.room_id, tempRange)
+      .then(setTempHistory)
+      .catch(console.error)
+      .finally(() => setTempLoading(false));
+  }, [activePoint?.room_id, tempRange]);
+
   function handleBlobClick(pt: HeatmapPoint) {
     if (activePoint?.room_id === pt.room_id) {
       setActivePoint(null);

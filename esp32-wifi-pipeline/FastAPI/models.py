@@ -60,7 +60,7 @@ class ScanPointDB(Base):
     assigned_at    — when the device was last assigned here.
 
     Future sensors (DHT22, air quality) just add:
-        temperature_reading.scan_point_id  → scan_point.id
+        dht22_reading.scan_point_id  → scan_point.id
         air_quality_reading.scan_point_id  → scan_point.id
     Zero further schema changes needed.
     """
@@ -80,8 +80,9 @@ class ScanPointDB(Base):
         CheckConstraint("y >= 0 AND y <= 1", name="ck_scan_point_y"),
     )
 
-    floorplan = relationship("FloorPlanDB", back_populates="scan_points")
-    scans     = relationship("WifiScanDB",  back_populates="scan_point")
+    floorplan            = relationship("FloorPlanDB",           back_populates="scan_points")
+    scans                = relationship("WifiScanDB",             back_populates="scan_point")
+    dht22_readings = relationship("Dht22ReadingDB",   back_populates="scan_point")
 
 
 class WifiScanDB(Base):
@@ -104,3 +105,23 @@ class WifiScanDB(Base):
     room_id = Column(Integer, ForeignKey("room.id", ondelete="SET NULL"), nullable=True, index=True)
 
     scan_point = relationship("ScanPointDB", back_populates="scans")
+
+
+class Dht22ReadingDB(Base):
+    """
+    One row per DHT22 reading from an ESP32.
+    Temperature and humidity come from the same sensor so they share a row.
+
+    received_at is stamped by the server (datetime.now UTC) — the ESP32 does not send timestamps.
+    scan_point_id is looked up by assigned_node at ingest time — same pattern as wifi_scan.
+    """
+    __tablename__ = "dht22_reading"
+
+    id            = Column(BigInteger, primary_key=True, index=True)
+    scan_point_id = Column(Integer, ForeignKey("scan_point.id", ondelete="SET NULL"), nullable=True, index=True)
+    node          = Column(Text, index=True)
+    temperature_c = Column(Float, nullable=False)   # °C — DHT22 range: -40 to +80
+    humidity_pct  = Column(Float, nullable=False)   # % — DHT22 range: 0 to 100
+    received_at   = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    scan_point = relationship("ScanPointDB", back_populates="dht22_readings")

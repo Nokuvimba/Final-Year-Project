@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from database import Base, engine, get_db
 from models import (
     WifiScanDB, BuildingDB, RoomDB,
-    FloorPlanDB, ScanPointDB,
+    FloorPlanDB, ScanPointDB, Dht22ReadingDB,
 )
 from schemas import (
     BuildingCreate, BuildingUpdate,
@@ -70,8 +70,9 @@ def ingest(
     payload: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
 ):
-    node = payload.get("node")
-    scans = payload.get("scans", [])
+    node        = payload.get("node")
+    scans       = payload.get("scans", [])
+    temperature = payload.get("temperature")   # optional DHT22 block
 
     # ── Validation ────────────────────────────────────────────────────────────
     if not node:
@@ -81,20 +82,16 @@ def ingest(
         raise HTTPException(status_code=400, detail="Missing or empty 'scans' array in payload")
 
     # ── Node validation (security) ────────────────────────────────────────────
-    # Reject any node name not already assigned to a scan_point by the admin.
-    # This prevents unknown devices or bots from inserting data.
     known = db.query(ScanPointDB).filter(ScanPointDB.assigned_node == node).first()
     if not known:
         raise HTTPException(status_code=403, detail="Unassigned")
 
     # ── Stamp server-side timestamp once for this batch ───────────────────────
-    # All rows in this batch share the same received_at (the moment the POST arrived).
-    # The ESP32 does not need to send a timestamp — server time is reliable.
-    server_now = datetime.now(timezone.utc)
+    server_now    = datetime.now(timezone.utc)
+    scan_point_id = known.id
 
-    scan_point_id = known.id  # already resolved above
+    # ── Store WiFi scans ──────────────────────────────────────────────────────
     accepted = 0
-
     for s in scans:
         row = WifiScanDB(
             node          = node,
@@ -103,7 +100,7 @@ def ingest(
             rssi          = s.get("rssi"),
             channel       = s.get("channel"),
             enc           = s.get("enc"),
-            received_at   = server_now,   # server adds the real UTC timestamp
+            received_at   = server_now,
             scan_point_id = scan_point_id,
         )
         db.add(row)
@@ -114,11 +111,32 @@ def ingest(
             db.rollback()
             continue
 
+    # ── Store temperature + humidity (optional) ───────────────────────────────
+    # Present only when DHT22 is wired and returns valid readings.
+    temp_stored = False
+    if temperature and isinstance(temperature, dict):
+        temp_c  = temperature.get("temperature_c")
+        hum_pct = temperature.get("humidity_pct")
+        if temp_c is not None and hum_pct is not None:
+            try:
+                db.add(Dht22ReadingDB(
+                    node          = node,
+                    scan_point_id = scan_point_id,
+                    temperature_c = float(temp_c),
+                    humidity_pct  = float(hum_pct),
+                    received_at   = server_now,
+                ))
+                db.flush()
+                temp_stored = True
+            except Exception:
+                db.rollback()
+
     db.commit()
     return {
         "status":        "Assigned",
         "accepted":      accepted,
         "total":         len(scans),
+        "temp_stored":   temp_stored,
         "node":          node,
         "scan_point_id": scan_point_id,
         "received_at":   server_now.isoformat(),
@@ -326,6 +344,52 @@ def get_scan_point_wifi_history(
         "buckets":       result,
     }
 
+
+
+@app.get("/scan-points/{point_id}/dht22-history")
+def get_dht22_history(
+    point_id: int,
+    time_range: str = Query(default="24h", pattern="^(1h|6h|24h|7d|30d)$"),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns recent temperature and humidity readings for a scan point.
+
+    time_range: 1h | 6h | 24h | 7d | 30d
+    Each reading: received_at (ISO UTC), temperature_c (°C), humidity_pct (%)
+    """
+    point = db.get(ScanPointDB, point_id)
+    if not point:
+        raise HTTPException(status_code=404, detail="Scan point not found")
+
+    from datetime import datetime, timedelta, timezone
+
+    RANGE_MINUTES = {"1h": 60, "6h": 360, "24h": 1440, "7d": 10080, "30d": 43200}
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=RANGE_MINUTES[time_range])
+
+    rows = (
+        db.query(Dht22ReadingDB)
+        .filter(
+            Dht22ReadingDB.scan_point_id == point_id,
+            Dht22ReadingDB.received_at   >= cutoff,
+        )
+        .order_by(Dht22ReadingDB.received_at.asc())
+        .all()
+    )
+
+    return {
+        "scan_point_id": point_id,
+        "time_range":    time_range,
+        "count":         len(rows),
+        "readings": [
+            {
+                "received_at":   r.received_at.isoformat(),
+                "temperature_c": r.temperature_c,
+                "humidity_pct":  r.humidity_pct,
+            }
+            for r in rows
+        ],
+    }
 
 
 def _format_point(point: ScanPointDB, db: Session) -> dict:
@@ -592,6 +656,27 @@ def list_raw_scans(limit: int = Query(25, ge=1, le=1000), db: Session = Depends(
                 "rssi": r.rssi,
                 "channel": r.channel,
                 "enc": r.enc,
+                "scan_point_id": r.scan_point_id,
+                "label": r.scan_point.label if r.scan_point else None,
+                "x": r.scan_point.x if r.scan_point else None,
+                "y": r.scan_point.y if r.scan_point else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/dht22/tempHumidityHistory")
+def list_dht22_raw_scans(limit: int = Query(25, ge=1, le=1000), db: Session = Depends(get_db)):
+    rows = db.query(Dht22ReadingDB).order_by(Dht22ReadingDB.id.desc()).limit(limit).all()
+    return {
+        "rows": [
+            {
+                "id": r.id,
+                "received_at": r.received_at,
+                "node": r.node,
+                "temperature_c": r.temperature_c,
+                "humidity_pct": r.humidity_pct,
                 "scan_point_id": r.scan_point_id,
                 "label": r.scan_point.label if r.scan_point else None,
                 "x": r.scan_point.x if r.scan_point else None,

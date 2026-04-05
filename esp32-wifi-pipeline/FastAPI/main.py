@@ -227,6 +227,8 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
     if not point:
         raise HTTPException(status_code=404, detail="Scan point not found")
 
+    db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == point_id).delete()
+    db.query(Dht22ReadingDB).filter(Dht22ReadingDB.scan_point_id == point_id).delete()
     db.delete(point)
     db.commit()
     return {"message": "Scan point deleted"}

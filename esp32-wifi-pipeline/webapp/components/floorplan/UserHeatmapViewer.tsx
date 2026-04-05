@@ -5,8 +5,8 @@
 // Click a blob → right side panel slides in with Overview / Signal / Temp / Humidity / Air tabs.
 
 import { useEffect, useState, useRef } from "react";
-import { fetchFloorplanHeatmap, fetchWifiHistory } from "@/lib/api";
-import type { HeatmapPoint, WifiHistoryBucket, TimeRange } from "@/lib/api";
+import { fetchFloorplanHeatmap, fetchWifiHistory, fetchDht22History } from "@/lib/api";
+import type { HeatmapPoint, WifiHistoryBucket, TimeRange, Dht22Reading } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -138,6 +138,9 @@ export default function UserHeatmapViewer({
       })()
     : activePoint?.last_scan_at ?? null;
   const [chartRange,   setChartRange]   = useState<TimeRange>("20m");
+  const [tempHistory,  setTempHistory]  = useState<Dht22Reading[]>([]);
+  const [tempLoading,  setTempLoading]  = useState(false);
+  const [tempRange,    setTempRange]    = useState<string>("24h");
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Load heatmap data
@@ -368,26 +371,54 @@ export default function UserHeatmapViewer({
                   />
                 </div>
 
-                {/* Pending sensors — compact row list */}
+                {/* Sensor rows — real data when available, pending otherwise */}
                 <div style={{ borderRadius: 10, border: `1px solid ${T.listBorder}`, overflow: "hidden" }}>
-                  {[
-                    { icon: "🌡️", label: "Temperature", unit: "°C", color: "#ea580c", bg: "#fff7ed" },
-                    { icon: "💧", label: "Humidity",    unit: "%",  color: "#7c3aed", bg: "#f5f3ff" },
-                    { icon: "🌿", label: "Air Quality", unit: "AQI", color: "#16a34a", bg: "#f0fdf4" },
-                  ].map((s, i) => (
-                    <div key={s.label} style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      padding: "0.55rem 0.875rem",
-                      borderBottom: i < 2 ? `1px solid ${T.listRowBorder}` : "none",
-                      background: T.listRowBg,
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 6, background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem" }}>{s.icon}</div>
-                        <span style={{ fontSize: "0.78rem", color: T.listLabelCol }}>{s.label}</span>
+                  {/* Temperature */}
+                  {(() => {
+                    const latest = tempHistory.length > 0 ? tempHistory[tempHistory.length - 1] : null;
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.55rem 0.875rem", borderBottom: `1px solid ${T.listRowBorder}`, background: T.listRowBg }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <div style={{ width: 26, height: 26, borderRadius: 6, background: "#fff7ed", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem" }}>🌡️</div>
+                          <span style={{ fontSize: "0.78rem", color: T.listLabelCol }}>Temperature</span>
+                        </div>
+                        {tempLoading ? (
+                          <span style={{ fontSize: "0.72rem", color: T.pendingCol }}>Loading…</span>
+                        ) : latest ? (
+                          <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#ea580c", fontFamily: "monospace" }}>{latest.temperature_c.toFixed(1)} °C</span>
+                        ) : (
+                          <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                        )}
                       </div>
-                      <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                    );
+                  })()}
+                  {/* Humidity */}
+                  {(() => {
+                    const latest = tempHistory.length > 0 ? tempHistory[tempHistory.length - 1] : null;
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.55rem 0.875rem", borderBottom: `1px solid ${T.listRowBorder}`, background: T.listRowBg }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <div style={{ width: 26, height: 26, borderRadius: 6, background: "#f5f3ff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem" }}>💧</div>
+                          <span style={{ fontSize: "0.78rem", color: T.listLabelCol }}>Humidity</span>
+                        </div>
+                        {tempLoading ? (
+                          <span style={{ fontSize: "0.72rem", color: T.pendingCol }}>Loading…</span>
+                        ) : latest ? (
+                          <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "#7c3aed", fontFamily: "monospace" }}>{latest.humidity_pct.toFixed(1)} %</span>
+                        ) : (
+                          <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* Air Quality — still pending */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.55rem 0.875rem", background: T.listRowBg }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem" }}>🌿</div>
+                      <span style={{ fontSize: "0.78rem", color: T.listLabelCol }}>Air Quality</span>
                     </div>
-                  ))}
+                    <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                  </div>
                 </div>
 
                 {/* Device + last scan timestamp */}
@@ -451,16 +482,58 @@ export default function UserHeatmapViewer({
             {/* ── Temp tab ── */}
             {activeTab === "temp" && (
               <div>
-                <h3 style={{ margin: "0 0 1rem", fontSize: "0.9rem", fontWeight: 700, color: T.h3Color }}>Temperature History</h3>
-                <PendingChart color="#f97316" label="DHT22 sensor not yet wired" tokens={T} />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.875rem" }}>
+                  <h3 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: T.h3Color }}>Temperature History</h3>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {(["1h","6h","24h","7d"] as string[]).map(r => (
+                      <button key={r} onClick={() => setTempRange(r)} style={{
+                        background: tempRange === r ? T.rangeBtnActive : T.rangeBtnBg,
+                        border: "none", borderRadius: 5,
+                        color: tempRange === r ? T.rangeBtnActiveCol : T.rangeBtnCol,
+                        fontSize: "0.68rem", fontWeight: 600,
+                        padding: "0.2rem 0.45rem", cursor: "pointer",
+                      }}>{r}</button>
+                    ))}
+                  </div>
+                </div>
+                {tempLoading ? (
+                  <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: "0.78rem", color: T.pendingCol }}>Loading…</span>
+                  </div>
+                ) : tempHistory.length > 0 ? (
+                  <TempLineChart data={tempHistory} color="#f97316" yKey="temperature_c" unit="°C" tokens={T} />
+                ) : (
+                  <PendingChart color="#f97316" label="No temperature data yet — DHT22 wired to GPIO 4" tokens={T} />
+                )}
               </div>
             )}
 
             {/* ── Humidity tab ── */}
             {activeTab === "humidity" && (
               <div>
-                <h3 style={{ margin: "0 0 1rem", fontSize: "0.9rem", fontWeight: 700, color: T.h3Color }}>Humidity History</h3>
-                <PendingChart color="#818cf8" label="DHT22 sensor not yet wired" tokens={T} />
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.875rem" }}>
+                  <h3 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: T.h3Color }}>Humidity History</h3>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {(["1h","6h","24h","7d"] as string[]).map(r => (
+                      <button key={r} onClick={() => setTempRange(r)} style={{
+                        background: tempRange === r ? T.rangeBtnActive : T.rangeBtnBg,
+                        border: "none", borderRadius: 5,
+                        color: tempRange === r ? T.rangeBtnActiveCol : T.rangeBtnCol,
+                        fontSize: "0.68rem", fontWeight: 600,
+                        padding: "0.2rem 0.45rem", cursor: "pointer",
+                      }}>{r}</button>
+                    ))}
+                  </div>
+                </div>
+                {tempLoading ? (
+                  <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: "0.78rem", color: T.pendingCol }}>Loading…</span>
+                  </div>
+                ) : tempHistory.length > 0 ? (
+                  <TempLineChart data={tempHistory} color="#818cf8" yKey="humidity_pct" unit="%" tokens={T} />
+                ) : (
+                  <PendingChart color="#818cf8" label="No humidity data yet — DHT22 wired to GPIO 4" tokens={T} />
+                )}
               </div>
             )}
 
@@ -640,6 +713,96 @@ function LightLineChart({ data, color, yKey, tooltipLabel, tokens, chartRange }:
           {tooltip.bucket.avg_rssi != null && (
             <><br /><span style={{ color: T.tooltipSubCol }}>{tooltip.bucket.avg_rssi} dBm</span></>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TempLineChart — line chart for temperature or humidity readings
+// ═════════════════════════════════════════════════════════════════════════════
+
+function TempLineChart({ data, color, yKey, unit, tokens }: {
+  data: Dht22Reading[];
+  color: string;
+  yKey: "temperature_c" | "humidity_pct";
+  unit: string;
+  tokens: TokenMap;
+}) {
+  const T = tokens;
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; d: Dht22Reading } | null>(null);
+
+  const W = 284, H = 160;
+  const PAD = { top: 12, right: 8, bottom: 28, left: 34 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const values = data.map(d => d[yKey]);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const range  = maxVal - minVal || 1;
+
+  const pts = data.map((d, i) => ({
+    x: PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2),
+    y: PAD.top + (1 - (d[yKey] - minVal) / range) * chartH,
+    d,
+  }));
+
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const fillPath = linePath + ` L${pts[pts.length-1].x},${PAD.top+chartH} L${PAD.left},${PAD.top+chartH} Z`;
+
+  // X-axis: show a few time labels
+  const xLabels = data.filter((_, i) => i === 0 || i === Math.floor(data.length/2) || i === data.length - 1);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg width={W} height={H} style={{ overflow: "visible", display: "block" }} onMouseLeave={() => setTooltip(null)}>
+        <defs>
+          <linearGradient id={`tgrad-${color.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {[minVal, (minVal+maxVal)/2, maxVal].map((v, i) => {
+          const y = PAD.top + (1 - (v - minVal) / range) * chartH;
+          return (
+            <g key={i}>
+              <line x1={PAD.left} y1={y} x2={PAD.left+chartW} y2={y} stroke={T.gridLinCol} strokeWidth={1} />
+              <text x={PAD.left-4} y={y+4} textAnchor="end" fill="#9ca3af" fontSize={8} fontFamily="monospace">{v.toFixed(1)}</text>
+            </g>
+          );
+        })}
+        <path d={fillPath} fill={`url(#tgrad-${color.replace("#","")})`} />
+        <path d={linePath} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={6} fill="transparent" onMouseEnter={() => setTooltip({ x: p.x, y: p.y, d: p.d })} />
+        ))}
+        {tooltip && (() => {
+          const pp = pts.find(p => p.d === tooltip.d);
+          return pp ? <circle cx={pp.x} cy={pp.y} r={4} fill={color} stroke="#fff" strokeWidth={2} /> : null;
+        })()}
+        {xLabels.map(d => {
+          const i = data.indexOf(d);
+          const x = PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2);
+          const t = new Date(d.received_at);
+          const label = t.toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", hour12: false });
+          return <text key={i} x={x} y={H-2} textAnchor="middle" fill="#9ca3af" fontSize={8} fontFamily="monospace">{label}</text>;
+        })}
+      </svg>
+      {tooltip && (
+        <div style={{
+          position: "absolute", left: Math.min(tooltip.x+4, W-140), top: Math.max(tooltip.y-52, 0),
+          background: T.tooltipBg, border: `1px solid ${T.tooltipBorder}`,
+          borderRadius: 8, padding: "0.3rem 0.6rem", fontSize: "0.72rem",
+          color: T.tooltipCol, pointerEvents: "none", whiteSpace: "nowrap", zIndex: 10,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+        }}>
+          <span style={{ color: T.tooltipSubCol }}>
+            {new Date(tooltip.d.received_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          </span>
+          <br />
+          <span style={{ color, fontWeight: 700 }}>{tooltip.d[yKey].toFixed(1)} {unit}</span>
         </div>
       )}
     </div>

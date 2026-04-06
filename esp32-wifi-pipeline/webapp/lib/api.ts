@@ -420,10 +420,40 @@ export async function fetchDht22History(
   scanPointId: number,
   time_range: string = "24h"
 ): Promise<Dht22Reading[]> {
+  // Uses FastAPI directly (not the Next.js /api proxy) — same pattern as
+  // the inline fetches in UserHeatmapViewer which are confirmed working.
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const res = await fetch(
-    `${API_BASE}/scan-points/${scanPointId}/dht22-history?time_range=${time_range}`,
+    `${base}/scan-points/${scanPointId}/dht22-history?time_range=${time_range}`,
     { cache: "no-store" }
   );
   const data = await handleJson<TemperatureHistoryResponse>(res);
   return data.readings ?? [];
+}
+
+
+// ─── DHT22 Heatmap ───────────────────────────────────────────────────────────
+// One entry per scan point — the LATEST dht22_reading at that location.
+// Used to colour heatmap blobs by temperature or humidity mode.
+
+export type Dht22HeatmapPoint = {
+  scan_point_id: number;
+  label:         string;
+  x:             number | null;
+  y:             number | null;
+  assigned_node: string | null;
+  temperature_c: number | null;   // null if no DHT22 data yet
+  humidity_pct:  number | null;
+  temp_level:    "cool" | "warm" | "hot" | null;
+  humidity_level:"low"  | "medium" | "high" | null;
+  received_at:   string | null;
+};
+
+export async function fetchDht22Heatmap(floorplanId: number): Promise<Dht22HeatmapPoint[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const res = await fetch(
+    `${base}/heatmap/floorplan/${floorplanId}/dht22`,
+    { cache: "no-store" }
+  );
+  return handleJson<Dht22HeatmapPoint[]>(res);
 }

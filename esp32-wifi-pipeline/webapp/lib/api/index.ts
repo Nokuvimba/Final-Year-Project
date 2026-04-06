@@ -51,3 +51,13 @@ export {
 } from "./floorplans";
 
 export { fetchFloorplanHeatmap } from "./heatmap";
+
+export {
+  fetchWifiHistory,
+  fetchDht22History,
+} from "./dht22";
+
+export type { TimeRange, Dht22Reading } from "./dht22";
+
+export { fetchDht22Heatmap } from "./dht22";
+export type { Dht22HeatmapPoint } from "./dht22";

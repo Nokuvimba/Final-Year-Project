@@ -39,3 +39,6 @@ export async function fetchDht22History(
   const data = await handleJson<Dht22HistoryResponse>(res);
   return data.readings ?? [];
 }
+
+export { fetchDht22Heatmap } from "../api";
+export type { Dht22HeatmapPoint } from "../api";

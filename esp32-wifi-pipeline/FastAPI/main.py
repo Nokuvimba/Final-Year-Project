@@ -227,6 +227,7 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
     if not point:
         raise HTTPException(status_code=404, detail="Scan point not found")
 
+    # Explicitly delete child rows first to avoid FK constraint violations.
     db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == point_id).delete()
     db.query(Dht22ReadingDB).filter(Dht22ReadingDB.scan_point_id == point_id).delete()
     db.delete(point)
@@ -819,6 +820,83 @@ def _signal_level(avg_rssi: Optional[float]) -> Optional[str]:
     if avg_rssi >= -60: return "medium"
     if avg_rssi >= -70: return "low"
     return "weak"
+
+
+@app.get("/heatmap/floorplan/{floorplan_id}/dht22")
+def get_floorplan_dht22_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
+    """
+    Returns the latest DHT22 reading per scan point for a floor plan.
+    Used to colour the heatmap blobs by temperature or humidity.
+
+    For each scan_point on this floor plan that has at least one dht22_reading,
+    returns the MOST RECENT temperature_c and humidity_pct value.
+
+    Points with no DHT22 data are still returned so the frontend knows where
+    they are — just with null temperature_c / humidity_pct.
+    """
+    if not db.get(FloorPlanDB, floorplan_id):
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+
+    # Subquery: find the most recent received_at per scan_point_id
+    from sqlalchemy import select as sa_select
+    latest_subq = (
+        db.query(
+            Dht22ReadingDB.scan_point_id,
+            func.max(Dht22ReadingDB.received_at).label("max_received_at"),
+        )
+        .group_by(Dht22ReadingDB.scan_point_id)
+        .subquery()
+    )
+
+    # Join scan_points for this floor plan with their latest dht22 reading
+    result = (
+        db.query(
+            ScanPointDB.id,
+            ScanPointDB.label,
+            ScanPointDB.x,
+            ScanPointDB.y,
+            ScanPointDB.assigned_node,
+            Dht22ReadingDB.temperature_c,
+            Dht22ReadingDB.humidity_pct,
+            Dht22ReadingDB.received_at,
+        )
+        .outerjoin(latest_subq, latest_subq.c.scan_point_id == ScanPointDB.id)
+        .outerjoin(
+            Dht22ReadingDB,
+            (Dht22ReadingDB.scan_point_id == ScanPointDB.id) &
+            (Dht22ReadingDB.received_at == latest_subq.c.max_received_at),
+        )
+        .filter(ScanPointDB.floorplan_id == floorplan_id)
+        .all()
+    )
+
+    def _temp_level(t):
+        if t is None: return None
+        if t < 18:    return "cool"
+        if t < 26:    return "warm"
+        return "hot"
+
+    def _humidity_level(h):
+        if h is None: return None
+        if h < 30:    return "low"
+        if h < 60:    return "medium"
+        return "high"
+
+    return [
+        {
+            "scan_point_id": row.id,
+            "label":         row.label or f"Point {row.id}",
+            "x":             row.x,
+            "y":             row.y,
+            "assigned_node": row.assigned_node,
+            "temperature_c": row.temperature_c,
+            "humidity_pct":  row.humidity_pct,
+            "temp_level":    _temp_level(row.temperature_c),
+            "humidity_level":_humidity_level(row.humidity_pct),
+            "received_at":   row.received_at.isoformat() if row.received_at else None,
+        }
+        for row in result
+    ]
 
 
 @app.get("/heatmap/floorplan/{floorplan_id}", response_model=List[HeatmapPoint])

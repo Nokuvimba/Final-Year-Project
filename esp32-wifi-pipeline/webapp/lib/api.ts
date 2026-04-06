@@ -430,3 +430,30 @@ export async function fetchDht22History(
   const data = await handleJson<TemperatureHistoryResponse>(res);
   return data.readings ?? [];
 }
+
+
+// ─── DHT22 Heatmap ───────────────────────────────────────────────────────────
+// One entry per scan point — the LATEST dht22_reading at that location.
+// Used to colour heatmap blobs by temperature or humidity mode.
+
+export type Dht22HeatmapPoint = {
+  scan_point_id: number;
+  label:         string;
+  x:             number | null;
+  y:             number | null;
+  assigned_node: string | null;
+  temperature_c: number | null;   // null if no DHT22 data yet
+  humidity_pct:  number | null;
+  temp_level:    "cool" | "warm" | "hot" | null;
+  humidity_level:"low"  | "medium" | "high" | null;
+  received_at:   string | null;
+};
+
+export async function fetchDht22Heatmap(floorplanId: number): Promise<Dht22HeatmapPoint[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const res = await fetch(
+    `${base}/heatmap/floorplan/${floorplanId}/dht22`,
+    { cache: "no-store" }
+  );
+  return handleJson<Dht22HeatmapPoint[]>(res);
+}

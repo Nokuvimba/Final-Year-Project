@@ -46,7 +46,7 @@ const LEVEL: Record<string, { color: string; label: string }> = {
 
 type HeatmapMode = "signal" | "temp" | "humidity" | "air";
 
-// Temperature colour scale (°C): Cool < 18 | Warm 18–26 | Hot > 26
+// Temperature colour scale (°C): Cool < 16 | Comfortable 16–21 | Warm > 21
 const TEMP_LEVEL: Record<string, { color: string; label: string }> = {
   cool: { color: "#3b82f6", label: "Cool" },
   warm: { color: "#f59e0b", label: "Warm" },
@@ -231,7 +231,7 @@ export default function UserHeatmapViewer({
 
   const LEGENDS: Record<HeatmapMode, { title: string; items: { label: string; color: string }[] }> = {
     signal:   { title: "Signal Density", items: [{ label: "Low", color: "#3b82f6" }, { label: "Med", color: "#f59e0b" }, { label: "High", color: "#ef4444" }] },
-    temp:     { title: "Temperature",    items: [{ label: "Cool", color: "#3b82f6" }, { label: "Warm", color: "#f59e0b" }, { label: "Hot", color: "#ef4444" }] },
+    temp:     { title: "Temperature",    items: [{ label: "Cool <16°C", color: "#3b82f6" }, { label: "~16–21°C", color: "#f59e0b" }, { label: "Warm >21°C", color: "#ef4444" }] },
     humidity: { title: "Humidity",       items: [{ label: "Low", color: "#a5b4fc" }, { label: "Med", color: "#818cf8" }, { label: "High", color: "#6d28d9" }] },
     air:      { title: "Air Quality",    items: [{ label: "Good", color: "#22c55e" }, { label: "Mod", color: "#84cc16" }, { label: "Poor", color: "#ef4444" }] },
   };

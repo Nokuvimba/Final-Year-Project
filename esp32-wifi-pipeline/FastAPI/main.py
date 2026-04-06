@@ -228,6 +228,8 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Scan point not found")
 
     # Explicitly delete child rows first to avoid FK constraint violations.
+    # This is needed regardless of ON DELETE SET NULL — the DB may have been
+    # created before the constraint was added.
     db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == point_id).delete()
     db.query(Dht22ReadingDB).filter(Dht22ReadingDB.scan_point_id == point_id).delete()
     db.delete(point)
@@ -871,9 +873,13 @@ def get_floorplan_dht22_heatmap(floorplan_id: int, db: Session = Depends(get_db)
     )
 
     def _temp_level(t):
+        # Thresholds adjusted for Irish indoor environment
+        # Cool: below 16°C (cold room, poor heating)
+        # Comfortable: 16–21°C (typical Irish indoor range)
+        # Warm: above 21°C (well heated or warm day)
         if t is None: return None
-        if t < 18:    return "cool"
-        if t < 26:    return "warm"
+        if t < 16:    return "cool"
+        if t < 21:    return "warm"
         return "hot"
 
     def _humidity_level(h):

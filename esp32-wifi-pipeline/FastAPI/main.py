@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import math, os, uuid
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form
+from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
@@ -21,6 +21,19 @@ from schemas import (
     RoomCreate, RoomUpdate,
     FloorPlanUrlCreate, HeatmapPoint,
 )
+
+
+# ── JWT Auth config ──────────────────────────────────────────────────────────
+# Credentials and secret are loaded from .env — never hardcoded.
+# pip install python-jose[cryptography]
+from jose import JWTError, jwt
+from datetime import timedelta
+
+JWT_SECRET       = os.getenv("JWT_SECRET",       "change-me-before-deploy")
+JWT_ALGORITHM    = "HS256"
+JWT_EXPIRY_HOURS = 8   # token valid for 8 hours — suitable for a demo day
+ADMIN_EMAIL      = os.getenv("ADMIN_EMAIL",      "admin@mssia.ie")
+ADMIN_PASSWORD   = os.getenv("ADMIN_PASSWORD",   "admin123")
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
@@ -49,6 +62,46 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+#
+# POST /auth/login  — validate credentials, return a signed JWT access token
+# GET  /auth/verify — validate a token (called by the frontend on page load)
+#
+# Token is stored in the browser's localStorage and sent as:
+#   Authorization: Bearer <token>
+
+@app.post("/auth/login")
+def auth_login(payload: Dict[str, Any] = Body(...)):
+    email    = payload.get("email", "").strip().lower()
+    password = payload.get("password", "")
+
+    if email != ADMIN_EMAIL.lower() or password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token_data = {
+        "sub": email,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS),
+    }
+    token = jwt.encode(token_data, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"access_token": token, "token_type": "bearer"}
+
+
+@app.get("/auth/verify")
+def auth_verify(authorization: str = Header(default=None)):
+    """Validates the JWT token sent in the Authorization header.
+    Called by the admin studio on page load to check if the session is still valid.
+    Returns 401 if the token is missing, malformed, or expired.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed token")
+    token = authorization.split(" ", 1)[1]
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return {"valid": True, "email": payload.get("sub")}
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────

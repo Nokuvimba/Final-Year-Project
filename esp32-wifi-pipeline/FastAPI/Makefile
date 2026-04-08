@@ -21,3 +21,7 @@ createEnv:
 
 	pip install python-multipart
 	python3 -m pip install --upgrade pip
+
+postgres:
+	psql postgres -c "CREATE USER mssia_user WITH PASSWORD 'Password';"
+	psql postgres -c "CREATE DATABASE mssia_db OWNER mssia_user;"

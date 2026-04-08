@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ScanPointCanvas from "@/components/floorplan/ScanPointCanvas";
 import FloorplanHeatmapViewer from "@/components/floorplan/FloorplanHeatmapViewer";
@@ -10,7 +11,6 @@ import {
   fetchBuildingFloorPlans,
   createBuilding,
   fetchScanPoints,
-  fetchDevices,
   assignDeviceToPoint,
   clearDevicePoint,
   updateScanPoint,
@@ -22,17 +22,26 @@ import {
   type Device,
 } from "@/lib/api";
 
-const API_BASE_KNOWN = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 async function fetchKnownNodes(): Promise<string[]> {
-  const res = await fetch(`${API_BASE_KNOWN}/devices/known`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
   const data = await res.json();
   return data.nodes ?? [];
+}
+
+async function fetchDevices(): Promise<Device[]> {
+  const res = await fetch(`${API_BASE}/devices`, { cache: "no-store" });
+  const data = await res.json();
+  return data.devices ?? [];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("mssia_token");
+}
 
 function getImageUrl(url: string): string {
   if (!url) return "";
@@ -47,6 +56,23 @@ type Mode = "edit" | "view";
 // ═════════════════════════════════════════════════════════════════════════════
 
 export default function AdminStudioClient() {
+  const router = useRouter();
+
+  // ── Auth ───────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const token = getToken();
+    if (!token) { router.replace("/admin/login"); return; }
+    fetch(`${API_BASE}/auth/verify`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(res => {
+      if (!res.ok) { localStorage.removeItem("mssia_token"); router.replace("/admin/login"); }
+    }).catch(() => { console.warn("Auth verify failed — running offline?"); });
+  }, []);
+
+  function handleLogout() {
+    localStorage.removeItem("mssia_token");
+    router.push("/admin/login");
+  }
 
   // ── Data ───────────────────────────────────────────────────────────────────
   const [buildings,         setBuildings]         = useState<Building[]>([]);
@@ -326,6 +352,12 @@ export default function AdminStudioClient() {
             <GhostBtn onClick={() => setShowFloorModal(true)}>+ Floor Plan</GhostBtn>
           )}
           <GhostBtn onClick={() => setShowBuildingModal(true)}>+ Building</GhostBtn>
+          <button
+            onClick={handleLogout}
+            style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", borderRadius:6, color:"#64748b", fontSize:"0.72rem", fontWeight:600, padding:"0.25rem 0.6rem", cursor:"pointer", transition:"all 0.15s" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "#f87171")}
+            onMouseLeave={e => (e.currentTarget.style.color = "#64748b")}
+          >Logout</button>
           <span style={css.adminBadge}>ADMIN</span>
         </div>
       </header>

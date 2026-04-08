@@ -4,9 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-// Production: POST /auth/login → JWT in httpOnly cookie → Next.js middleware guard later on 
-const DEMO_EMAIL    = "admin@mssia.ie";
-const DEMO_PASSWORD = "admin123";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -23,13 +21,25 @@ export default function AdminLoginPage() {
     setLoading(true);
     setError("");
 
-    // Simulating network delay for realism
-    await new Promise(r => setTimeout(r, 500));
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
 
-    if (email.trim() === DEMO_EMAIL && password === DEMO_PASSWORD) {
-      router.push("/admin/studio");
-    } else {
-      setError("Invalid email or password.");
+      if (res.ok) {
+        const data = await res.json();
+        // Store JWT in localStorage — sent as Bearer token on every admin request
+        localStorage.setItem("mssia_token", data.access_token);
+        router.push("/admin/studio");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.detail ?? "Invalid email or password.");
+        setLoading(false);
+      }
+    } catch {
+      setError("Could not connect to server. Is FastAPI running?");
       setLoading(false);
     }
   }

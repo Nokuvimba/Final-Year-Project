@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from database import Base, engine, get_db
 from models import (
     WifiScanDB, BuildingDB, RoomDB,
-    FloorPlanDB, ScanPointDB, Dht22ReadingDB,
+    FloorPlanDB, ScanPointDB, Dht22ReadingDB, Mq135ReadingDB,
 )
 from schemas import (
     BuildingCreate, BuildingUpdate,
@@ -184,12 +184,34 @@ def ingest(
             except Exception:
                 db.rollback()
 
+    # ── Store air quality reading (optional) ─────────────────────────────────
+    # Present only when MQ-135 is wired and analogRead returns a non-zero value.
+    air_stored = False
+    air_quality = payload.get("air_quality")
+    if air_quality and isinstance(air_quality, dict):
+        ppm       = air_quality.get("ppm")
+        raw_value = air_quality.get("raw_value")
+        if ppm is not None:
+            try:
+                db.add(Mq135ReadingDB(
+                    node          = node,
+                    scan_point_id = scan_point_id,
+                    ppm           = float(ppm),
+                    raw_value     = int(raw_value) if raw_value is not None else None,
+                    received_at   = server_now,
+                ))
+                db.flush()
+                air_stored = True
+            except Exception:
+                db.rollback()
+
     db.commit()
     return {
         "status":        "Assigned",
         "accepted":      accepted,
         "total":         len(scans),
         "temp_stored":   temp_stored,
+        "air_stored":    air_stored,
         "node":          node,
         "scan_point_id": scan_point_id,
         "received_at":   server_now.isoformat(),
@@ -285,6 +307,7 @@ def delete_scan_point(point_id: int, db: Session = Depends(get_db)):
     # created before the constraint was added.
     db.query(WifiScanDB).filter(WifiScanDB.scan_point_id == point_id).delete()
     db.query(Dht22ReadingDB).filter(Dht22ReadingDB.scan_point_id == point_id).delete()
+    db.query(Mq135ReadingDB).filter(Mq135ReadingDB.scan_point_id == point_id).delete()
     db.delete(point)
     db.commit()
     return {"message": "Scan point deleted"}
@@ -743,6 +766,120 @@ def list_dht22_raw_scans(limit: int = Query(25, ge=1, le=1000), db: Session = De
             for r in rows
         ]
     }
+
+
+@app.get("/mq135/rawScans")
+def list_mq135_raw_scans(limit: int = Query(25, ge=1, le=1000), db: Session = Depends(get_db)):
+    """Returns most recent MQ-135 readings across all scan points.
+    Mirrors /wifi/rawScans and /dht22/tempHumidityHistory — used in the admin raw data view.
+    """
+    rows = db.query(Mq135ReadingDB).order_by(Mq135ReadingDB.id.desc()).limit(limit).all()
+    return {
+        "rows": [
+            {
+                "id":            r.id,
+                "received_at":   r.received_at,
+                "node":          r.node,
+                "ppm":           r.ppm,
+                "raw_value":     r.raw_value,
+                "scan_point_id": r.scan_point_id,
+                "label":         r.scan_point.label if r.scan_point else None,
+                "x":             r.scan_point.x    if r.scan_point else None,
+                "y":             r.scan_point.y    if r.scan_point else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/scan-points/{point_id}/mq135-history")
+def get_mq135_history(
+    point_id: int,
+    time_range: str = Query(default="24h", pattern="^(1h|6h|24h|7d|30d)$"),
+    db: Session = Depends(get_db),
+):
+    """Returns recent MQ-135 air quality readings for a specific scan point.
+    Same pattern as /scan-points/{id}/dht22-history.
+    time_range: 1h | 6h | 24h | 7d | 30d
+    """
+    point = db.get(ScanPointDB, point_id)
+    if not point:
+        raise HTTPException(status_code=404, detail="Scan point not found")
+
+    from datetime import timedelta
+    RANGE_MINUTES = {"1h": 60, "6h": 360, "24h": 1440, "7d": 10080, "30d": 43200}
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=RANGE_MINUTES[time_range])
+
+    rows = (
+        db.query(Mq135ReadingDB)
+        .filter(
+            Mq135ReadingDB.scan_point_id == point_id,
+            Mq135ReadingDB.received_at   >= cutoff,
+        )
+        .order_by(Mq135ReadingDB.received_at.asc())
+        .all()
+    )
+
+    return {
+        "scan_point_id": point_id,
+        "time_range":    time_range,
+        "count":         len(rows),
+        "readings": [
+            {
+                "received_at": r.received_at.isoformat(),
+                "ppm":         r.ppm,
+                "raw_value":   r.raw_value,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/heatmap/floorplan/{floorplan_id}/mq135")
+def get_mq135_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
+    """Returns latest MQ-135 reading per scan point for the air quality heatmap mode.
+    Same pattern as /heatmap/floorplan/{id}/dht22.
+    air_level: good | moderate | poor — thresholds adjusted for 3.3V operation.
+    """
+    if not db.get(FloorPlanDB, floorplan_id):
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+
+    def _air_level(raw):
+        # Thresholds adjusted for 3.3V power supply (sensor calibrated for 5V).
+        # New sensor burn-in and 3.3V power shift values upward vs true PPM.
+        if raw is None:       return None
+        if raw < 2000:        return "good"
+        if raw < 2800:        return "moderate"
+        return "poor"
+
+    points = (
+        db.query(ScanPointDB)
+        .filter(ScanPointDB.floorplan_id == floorplan_id)
+        .all()
+    )
+
+    result = []
+    for pt in points:
+        # Get most recent MQ-135 reading for this scan point
+        latest = (
+            db.query(Mq135ReadingDB)
+            .filter(Mq135ReadingDB.scan_point_id == pt.id)
+            .order_by(Mq135ReadingDB.received_at.desc())
+            .first()
+        )
+        result.append({
+            "scan_point_id": pt.id,
+            "label":         pt.label or f"Point {pt.id}",
+            "x":             pt.x,
+            "y":             pt.y,
+            "assigned_node": pt.assigned_node,
+            "ppm":           latest.ppm       if latest else None,
+            "raw_value":     latest.raw_value if latest else None,
+            "air_level":     _air_level(latest.raw_value if latest else None),
+            "received_at":   latest.received_at.isoformat() if latest else None,
+        })
+
+    return result
 
 
 # ── Floor Plans ───────────────────────────────────────────────────────────────

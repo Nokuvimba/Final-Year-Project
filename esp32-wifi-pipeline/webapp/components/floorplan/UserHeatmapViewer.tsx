@@ -6,8 +6,8 @@
 // Mode switcher (Signal | Temp | Humidity | Air) changes blob colours across the whole map.
 
 import { useEffect, useState, useRef } from "react";
-import { fetchFloorplanHeatmap, fetchWifiHistory, fetchDht22History, fetchDht22Heatmap } from "@/lib/api";
-import type { HeatmapPoint, WifiHistoryBucket, TimeRange, Dht22Reading, Dht22HeatmapPoint } from "@/lib/api";
+import { fetchFloorplanHeatmap, fetchWifiHistory, fetchDht22History, fetchDht22Heatmap, fetchMq135History, fetchMq135Heatmap } from "@/lib/api";
+import type { HeatmapPoint, WifiHistoryBucket, TimeRange, Dht22Reading, Dht22HeatmapPoint, Mq135Reading, Mq135HeatmapPoint } from "@/lib/api";
 
 // ── Timestamp helpers ─────────────────────────────────────────────────────────
 
@@ -59,6 +59,13 @@ const HUMIDITY_LEVEL: Record<string, { color: string; label: string }> = {
   low:    { color: "#a5b4fc", label: "Low"  },
   medium: { color: "#818cf8", label: "Med"  },
   high:   { color: "#6d28d9", label: "High" },
+};
+
+// Air quality colour scale (raw ADC at 3.3V): Good < 2000 | Moderate 2000–2800 | Poor > 2800
+const AIR_LEVEL: Record<string, { color: string; label: string }> = {
+  good:     { color: "#22c55e", label: "Good"     },
+  moderate: { color: "#f59e0b", label: "Moderate" },
+  poor:     { color: "#ef4444", label: "Poor"     },
 };
 
 const MODE_CONFIG: Record<HeatmapMode, { icon: string; label: string; activeColor: string; activeBg: string }> = {
@@ -147,6 +154,12 @@ export default function UserHeatmapViewer({
   const [heatmapMode,  setHeatmapMode]  = useState<HeatmapMode>("signal");
   const [dht22Points,  setDht22Points]  = useState<Dht22HeatmapPoint[]>([]);
   const [dht22Loading, setDht22Loading] = useState(false);
+  // ── MQ-135 air quality ────────────────────────────────────────────────────
+  const [mq135Points,   setMq135Points]   = useState<Mq135HeatmapPoint[]>([]);
+  const [mq135Loading,  setMq135Loading]  = useState(false);
+  const [mq135History,  setMq135History]  = useState<Mq135Reading[]>([]);
+  const [mq135AirLoad,  setMq135AirLoad]  = useState(false);
+  const [mq135Range,    setMq135Range]    = useState<string>("24h");
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -202,6 +215,26 @@ export default function UserHeatmapViewer({
       .finally(() => setDht22Loading(false));
   }, [floorplanId, heatmapMode]);
 
+  // Load MQ-135 heatmap data when mode switches to air
+  useEffect(() => {
+    if (heatmapMode !== "air") return;
+    setMq135Loading(true);
+    fetchMq135Heatmap(floorplanId)
+      .then(setMq135Points)
+      .catch(console.error)
+      .finally(() => setMq135Loading(false));
+  }, [floorplanId, heatmapMode]);
+
+  // Load MQ-135 history when a point is selected or mq135Range changes
+  useEffect(() => {
+    if (!activePoint) return;
+    setMq135AirLoad(true);
+    fetchMq135History(activePoint.room_id, mq135Range)
+      .then(setMq135History)
+      .catch(console.error)
+      .finally(() => setMq135AirLoad(false));
+  }, [activePoint?.room_id, mq135Range]);
+
   // ── Blob colour based on mode ─────────────────────────────────────────────
 
   function getBlobColor(pt: HeatmapPoint): string {
@@ -214,7 +247,12 @@ export default function UserHeatmapViewer({
       const lvl = d22?.humidity_level;
       return lvl ? HUMIDITY_LEVEL[lvl].color : "#d1d5db";
     }
-    // signal (default) or air (pending — still uses signal colours)
+    if (heatmapMode === "air") {
+      const mq = mq135Points.find(p => p.scan_point_id === pt.room_id);
+      const lvl = mq?.air_level;
+      return lvl ? AIR_LEVEL[lvl].color : "#d1d5db";
+    }
+    // signal (default)
     const cfg = pt.level ? LEVEL[pt.level] : null;
     return cfg?.color ?? "#94a3b8";
   }
@@ -457,7 +495,16 @@ export default function UserHeatmapViewer({
                         <div style={{ width: 26, height: 26, borderRadius: 6, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.78rem" }}>🌿</div>
                         <span style={{ fontSize: "0.78rem", color: T.listLabelCol }}>Air Quality</span>
                       </div>
-                      <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                      {mq135AirLoad ? (
+                        <span style={{ fontSize: "0.72rem", color: T.pendingCol }}>Loading…</span>
+                      ) : mq135History.length > 0 ? (() => {
+                        const latestAir = mq135History[mq135History.length - 1];
+                        const airLabel = latestAir.raw_value < 2000 ? "Good" : latestAir.raw_value < 2800 ? "Moderate" : "Poor";
+                        const airColor = airLabel === "Good" ? "#22c55e" : airLabel === "Moderate" ? "#f59e0b" : "#ef4444";
+                        return <span style={{ fontSize: "0.82rem", fontWeight: 700, color: airColor, fontFamily: "monospace" }}>{airLabel}</span>;
+                      })() : (
+                        <span style={{ fontSize: "0.72rem", color: T.pendingCol, fontStyle: "italic" }}>pending</span>
+                      )}
                     </div>
                   </div>
 
@@ -566,8 +613,28 @@ export default function UserHeatmapViewer({
               {/* Air tab */}
               {activeTab === "air" && (
                 <div>
-                  <h3 style={{ margin: "0 0 1rem", fontSize: "0.9rem", fontWeight: 700, color: T.h3Color }}>Air Quality Trend</h3>
-                  <PendingChart color="#10b981" label="MQ135 sensor not yet wired" bar tokens={T} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.875rem" }}>
+                    <h3 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: T.h3Color }}>Air Quality Trend</h3>
+                    <div style={{ display: "flex", gap: 3 }}>
+                      {(["1h","6h","24h","7d"] as string[]).map(r => (
+                        <button key={r} onClick={() => setMq135Range(r)} style={{
+                          background: mq135Range === r ? T.rangeBtnActive : T.rangeBtnBg,
+                          border: "none", borderRadius: 5,
+                          color: mq135Range === r ? T.rangeBtnActiveCol : T.rangeBtnCol,
+                          fontSize: "0.68rem", fontWeight: 600, padding: "0.2rem 0.45rem", cursor: "pointer",
+                        }}>{r}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {mq135AirLoad ? (
+                    <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: "0.78rem", color: T.pendingCol }}>Loading…</span>
+                    </div>
+                  ) : mq135History.length > 0 ? (
+                    <AirLineChart data={mq135History} tokens={T} />
+                  ) : (
+                    <PendingChart color="#10b981" label="No air quality data yet — MQ-135 wired to GPIO 34" bar tokens={T} />
+                  )}
                 </div>
               )}
             </div>
@@ -781,6 +848,82 @@ function PendingChart({ color, label, bar = false, tokens }: { color: string; la
         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: T.listLabelCol }}>Sensor pending</span>
         <span style={{ fontSize: "0.68rem", color: "#9ca3af", textAlign: "center", maxWidth: 180 }}>{label}</span>
       </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// AirLineChart — line chart for MQ-135 air quality (raw ADC over time)
+// Same pattern as TempLineChart but coloured by air quality level
+// ═════════════════════════════════════════════════════════════════════════════
+
+function AirLineChart({ data, tokens }: { data: Mq135Reading[]; tokens: TokenMap }) {
+  const T = tokens;
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; d: Mq135Reading } | null>(null);
+  const W = 284, H = 160;
+  const PAD = { top: 12, right: 8, bottom: 28, left: 40 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+  const values = data.map(d => d.raw_value);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const range  = maxVal - minVal || 1;
+  const pts = data.map((d, i) => ({
+    x: PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2),
+    y: PAD.top + (1 - (d.raw_value - minVal) / range) * chartH,
+    d,
+  }));
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const fillPath = linePath + ` L${pts[pts.length-1].x},${PAD.top+chartH} L${PAD.left},${PAD.top+chartH} Z`;
+  const xLabels = data.filter((_, i) => i === 0 || i === Math.floor(data.length/2) || i === data.length - 1);
+  // Colour the line based on average air level
+  const avgRaw = values.reduce((a,b) => a+b, 0) / values.length;
+  const lineColor = avgRaw < 2000 ? "#22c55e" : avgRaw < 2800 ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg width={W} height={H} style={{ overflow: "visible", display: "block" }} onMouseLeave={() => setTooltip(null)}>
+        <defs>
+          <linearGradient id={`airgrad`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={lineColor} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={lineColor} stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        {[minVal, (minVal+maxVal)/2, maxVal].map((v, i) => {
+          const y = PAD.top + (1 - (v - minVal) / range) * chartH;
+          const zoneLabel = v < 2000 ? "Good" : v < 2800 ? "Mod" : "Poor";
+          return <g key={i}>
+            <line x1={PAD.left} y1={y} x2={PAD.left+chartW} y2={y} stroke={T.gridLinCol} strokeWidth={1} />
+            <text x={PAD.left-4} y={y+4} textAnchor="end" fill="#9ca3af" fontSize={8} fontFamily="monospace">{zoneLabel}</text>
+          </g>;
+        })}
+        <path d={fillPath} fill="url(#airgrad)" />
+        <path d={linePath} fill="none" stroke={lineColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={6} fill="transparent" onMouseEnter={() => setTooltip({ x: p.x, y: p.y, d: p.d })} />)}
+        {tooltip && (() => { const pp = pts.find(p => p.d === tooltip.d); return pp ? <circle cx={pp.x} cy={pp.y} r={4} fill={lineColor} stroke="#fff" strokeWidth={2} /> : null; })()}
+        {xLabels.map(d => {
+          const i = data.indexOf(d);
+          const x = PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2);
+          return <text key={i} x={x} y={H-2} textAnchor="middle" fill="#9ca3af" fontSize={8} fontFamily="monospace">
+            {new Date(d.received_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", hour12: false })}
+          </text>;
+        })}
+      </svg>
+      {tooltip && (
+        <div style={{
+          position: "absolute", left: Math.min(tooltip.x+4, W-160), top: Math.max(tooltip.y-52, 0),
+          background: T.tooltipBg, border: `1px solid ${T.tooltipBorder}`, borderRadius: 8,
+          padding: "0.3rem 0.6rem", fontSize: "0.72rem", color: T.tooltipCol,
+          pointerEvents: "none", whiteSpace: "nowrap", zIndex: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+        }}>
+          <span style={{ color: T.tooltipSubCol }}>
+            {new Date(tooltip.d.received_at).toLocaleTimeString("en-IE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          </span><br />
+          <span style={{ color: lineColor, fontWeight: 700 }}>
+            🌿 {tooltip.d.raw_value} ppm — {tooltip.d.raw_value < 2000 ? "Good" : tooltip.d.raw_value < 2800 ? "Moderate" : "Poor"}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

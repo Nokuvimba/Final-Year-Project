@@ -533,19 +533,6 @@ export default function AdminStudioClient() {
                   )}
                 </Card>
 
-                {/* Stats */}
-                <Card title="Signal Stats">
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.5rem" }}>
-                    <Stat label="Avg RSSI" value={selectedPoint.scan_count > 0 ? "— dBm" : "No data"} color="#3b82f6" />
-                    <Stat label="Samples" value={String(selectedPoint.scan_count ?? 0)} color="#8b5cf6" />
-                  </div>
-                  {selectedPoint.scan_count === 0 && (
-                    <p style={{ fontSize:"0.7rem", color:"#334155", marginTop:"0.5rem", lineHeight:1.5 }}>
-                      Assign a device to start collecting scan data here.
-                    </p>
-                  )}
-                </Card>
-
                 {/* Delete */}
                 <button onClick={handleDeletePoint} disabled={deletingPoint} style={css.deleteBtn}>
                   {deletingPoint ? "Deleting…" : "Delete Scan Point"}

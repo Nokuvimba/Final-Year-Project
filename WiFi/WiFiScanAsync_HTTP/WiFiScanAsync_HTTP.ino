@@ -23,6 +23,16 @@ const char* NODE_TAG      = "ESP32-LAB-01";
 // DHT22 data pin
 const int   DHT_PIN       = 4;   // GPIO 4
 
+// MQ-135 air quality sensor pin
+// GPIO 34 — input-only pin, cleanest ADC on ESP32.
+// Powered from 3.3V so AOUT never exceeds 3.3V — safe to connect directly.
+// No resistors or voltage divider needed at 3.3V.
+// Thresholds adjusted for 3.3V operation (sensor is calibrated for 5V):
+//   Good     : raw ADC < 2000
+//   Moderate : raw ADC 2000 – 2800
+//   Poor     : raw ADC > 2800
+const int   MQ135_PIN     = 34;  // GPIO 34
+
 // ===========================================================
 // GLOBALS
 // ===========================================================
@@ -127,6 +137,7 @@ void postScannedNetworks(int16_t networksFound) {
   }
 
   // DHT22 reading — only add temperature block if sensor returns valid data
+  // isnan() catches the NaN value DHTesp returns on a read failure.
   TempAndHumidity data = dht.getTempAndHumidity();
   if (!isnan(data.temperature) && !isnan(data.humidity)) {
     JsonObject temp    = doc.createNestedObject("temperature");
@@ -135,6 +146,22 @@ void postScannedNetworks(int16_t networksFound) {
     Serial.printf("Temp: %.1f C  Humidity: %.1f%%\n", data.temperature, data.humidity);
   } else {
     Serial.println("DHT22 read failed — sending WiFi only this cycle");
+  }
+
+ // -- MQ-135 reading (optional) --------------------------------------------
+  // Reads raw 12-bit ADC value from GPIO 34 (0 = 0V, 4095 = 3.3V).
+  // Raw value is used directly as the PPM estimate - no library needed.
+  // A raw value of 0 means the sensor is not connected or not warmed up yet;
+  // in that case the block is omitted and no bad data reaches the database.
+  // The sensor needs ~30 seconds of warm-up after power-on for stable readings.
+  int rawAir = analogRead(MQ135_PIN);
+  if (rawAir > 0) {
+    JsonObject air   = doc.createNestedObject("air_quality");
+    air["ppm"]       = rawAir;   // raw ADC used as relative PPM indicator
+    air["raw_value"] = rawAir;
+    Serial.printf("MQ-135 Raw ADC: %d\n", rawAir);
+  } else {
+    Serial.println("MQ-135 read zero - omitting air_quality block this cycle");
   }
 
   String payload;
@@ -154,6 +181,10 @@ void setup() {
   // Initialise DHT22
   dht.setup(DHT_PIN, DHTesp::DHT22);
   Serial.printf("DHT22 on GPIO %d\n", DHT_PIN);
+
+  // MQ-135 - GPIO 34 is input-only by default, no pinMode needed.
+  // Print a reminder to let the sensor warm up before readings stabilise.
+  Serial.printf("MQ-135 on GPIO %d - allow 30s warm-up for stable readings\n", MQ135_PIN);
 
   connectWiFi();      // connect to Wi-Fi first
   startWiFiScan();    // start initial scan

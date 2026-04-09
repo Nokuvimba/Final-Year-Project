@@ -61,3 +61,6 @@ export type { TimeRange, Dht22Reading } from "./dht22";
 
 export { fetchDht22Heatmap } from "./dht22";
 export type { Dht22HeatmapPoint } from "./dht22";
+
+export { fetchMq135History, fetchMq135Heatmap } from "./mq135";
+export type { Mq135Reading, Mq135HeatmapPoint } from "./mq135";

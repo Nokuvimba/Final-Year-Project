@@ -1,4 +1,5 @@
 # models.py
+from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, BigInteger, Text, DateTime, ForeignKey, Float, CheckConstraint
 )
@@ -82,7 +83,8 @@ class ScanPointDB(Base):
 
     floorplan            = relationship("FloorPlanDB",           back_populates="scan_points")
     scans                = relationship("WifiScanDB",             back_populates="scan_point")
-    dht22_readings = relationship("Dht22ReadingDB",   back_populates="scan_point")
+    dht22_readings  = relationship("Dht22ReadingDB",   back_populates="scan_point")
+    mq135_readings  = relationship("Mq135ReadingDB",   back_populates="scan_point")
 
 
 class WifiScanDB(Base):
@@ -125,3 +127,23 @@ class Dht22ReadingDB(Base):
     received_at   = Column(DateTime(timezone=True), nullable=False, index=True)
 
     scan_point = relationship("ScanPointDB", back_populates="dht22_readings")
+
+
+class Mq135ReadingDB(Base):
+    """
+    One row per MQ-135 air quality reading received from an ESP32.
+    ppm       : raw ADC value used as a relative air quality indicator.
+                Good < 2000 | Moderate 2000-2800 | Poor > 2800
+    raw_value : stored separately in case a real calibration formula is added later(but l don't really need this in my project).
+    """
+    __tablename__ = "mq135_reading"
+
+    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    scan_point_id = Column(Integer, ForeignKey("scan_point.id", ondelete="SET NULL"), nullable=True)
+    node          = Column(Text,    nullable=True)
+    ppm           = Column(Float,   nullable=False)
+    raw_value     = Column(Integer, nullable=True)
+    received_at   = Column(DateTime(timezone=True), nullable=False,
+                           default=lambda: datetime.now(timezone.utc))
+
+    scan_point = relationship("ScanPointDB", back_populates="mq135_readings")

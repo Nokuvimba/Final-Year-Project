@@ -457,3 +457,53 @@ export async function fetchDht22Heatmap(floorplanId: number): Promise<Dht22Heatm
   );
   return handleJson<Dht22HeatmapPoint[]>(res);
 }
+
+// ─── MQ-135 Air Quality ───────────────────────────────────────────────────────
+// Same pattern as DHT22 — uses FastAPI directly (not the Next.js /api proxy).
+
+export type Mq135Reading = {
+  received_at: string;   // ISO UTC timestamp
+  ppm:         number;   // raw ADC value used as air quality indicator
+  raw_value:   number;   // same as ppm — stored separately for future calibration
+};
+
+export type Mq135HistoryResponse = {
+  scan_point_id: number;
+  time_range:    string;
+  count:         number;
+  readings:      Mq135Reading[];
+};
+
+export type Mq135HeatmapPoint = {
+  scan_point_id: number;
+  label:         string;
+  x:             number | null;
+  y:             number | null;
+  assigned_node: string | null;
+  ppm:           number | null;   // null if no MQ-135 data yet
+  raw_value:     number | null;
+  air_level:     "good" | "moderate" | "poor" | null;
+  received_at:   string | null;
+};
+
+export async function fetchMq135History(
+  scanPointId: number,
+  time_range: string = "24h"
+): Promise<Mq135Reading[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const res = await fetch(
+    `${base}/scan-points/${scanPointId}/mq135-history?time_range=${time_range}`,
+    { cache: "no-store" }
+  );
+  const data = await handleJson<Mq135HistoryResponse>(res);
+  return data.readings ?? [];
+}
+
+export async function fetchMq135Heatmap(floorplanId: number): Promise<Mq135HeatmapPoint[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const res = await fetch(
+    `${base}/heatmap/floorplan/${floorplanId}/mq135`,
+    { cache: "no-store" }
+  );
+  return handleJson<Mq135HeatmapPoint[]>(res);
+}

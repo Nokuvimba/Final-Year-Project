@@ -410,7 +410,7 @@ function SignalTrendChart({ data, color }: { data: WifiHistoryBucket[]; color: s
                   marginTop: 2,
                   whiteSpace: "nowrap",
                 }}>
-                  {bucket.minute_ago}m
+                  {bucket.label}
                 </span>
               )}
             </div>

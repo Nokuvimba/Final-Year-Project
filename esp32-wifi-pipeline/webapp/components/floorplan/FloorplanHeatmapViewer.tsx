@@ -448,7 +448,7 @@ function SignalTrendChart({ data, color }: { data: WifiHistoryBucket[]; color: s
                 {hovered.level ?? "No signal"}
               </span>
               <span style={{ color: "#334155" }}>·</span>
-              <span style={{ color: "#64748b" }}>{hovered.minute_ago}m ago</span>
+              <span style={{ color: "#64748b" }}>{hovered.label}m ago</span>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <span>

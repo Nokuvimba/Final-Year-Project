@@ -23,13 +23,6 @@ function getImageUrl(url: string): string {
   return `${API_BASE}${url}`;
 }
 
-const SENSOR_TABS = [
-  { key: "signal",   label: "Signal",   icon: "📶", live: true  },
-  { key: "temp",     label: "Temp",     icon: "🌡️", live: false },
-  { key: "humidity", label: "Humidity", icon: "💧", live: false },
-  { key: "air",      label: "Air",      icon: "🌿", live: false },
-];
-
 export default function UserViewerPage() {
   const [buildings,         setBuildings]         = useState<Building[]>([]);
   const [selectedBuilding,  setSelectedBuilding]  = useState<Building | null>(null);
@@ -39,8 +32,6 @@ export default function UserViewerPage() {
   const [loadingFloors,     setLoadingFloors]     = useState(false);
   const [searchQuery,       setSearchQuery]       = useState("");
   const [showDropdown,      setShowDropdown]      = useState(false);
-  const [activeSensor,      setActiveSensor]      = useState("signal");
-
   useEffect(() => {
     fetchBuildings()
       .then(setBuildings)
@@ -133,27 +124,7 @@ export default function UserViewerPage() {
           )}
         </div>
 
-        {/* Sensor filter tabs */}
-        <div style={{ display: "flex", gap: "0.2rem", marginLeft: "auto", flexShrink: 0 }}>
-          {SENSOR_TABS.map(tab => (
-            <button key={tab.key}
-              onClick={() => tab.live && setActiveSensor(tab.key)}
-              title={!tab.live ? "Sensor not yet wired" : undefined}
-              style={{
-                display: "flex", alignItems: "center", gap: "0.35rem",
-                padding: "0.38rem 0.875rem", borderRadius: 20, border: "none",
-                background: activeSensor === tab.key ? "#2563eb" : "transparent",
-                color: activeSensor === tab.key ? "#ffffff" : tab.live ? "#374151" : "#d1d5db",
-                fontSize: "0.82rem", fontWeight: activeSensor === tab.key ? 600 : 400,
-                cursor: tab.live ? "pointer" : "not-allowed",
-                opacity: tab.live ? 1 : 0.5,
-                transition: "all 0.15s",
-              }}>
-              <span style={{ fontSize: "0.8rem" }}>{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
-        </div>
+
       </header>
 
       {/* Floor tabs */}

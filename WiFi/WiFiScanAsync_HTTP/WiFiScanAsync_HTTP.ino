@@ -13,7 +13,7 @@ const char* WIFI_SSID     =  "Three_7F2C30"; //"ATU-Galway-Guest-Aruba";//"Talie
 const char* WIFI_PASSWORD =   "5sQuXs2zv22y2z5";// "225299";//"N7talie123"; //"5sQuXs2zv22y2z5";
 
 // My FastAPI endpoint using the laptop's LAN IP
-const char* INGEST_URL    = "http://3.230.116.138:8000/ingest"; //AWS
+const char* INGEST_URL    = "http://3.230.116.138:8000/ingest"; // AWS
 //const char* INGEST_URL    = "http://192.168.0.6:8000/ingest"; //Home
 //const char* INGEST_URL = "http://172.20.10.5:8000/ingest"; //ATU
 

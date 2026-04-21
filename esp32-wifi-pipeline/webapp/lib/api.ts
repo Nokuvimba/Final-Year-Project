@@ -517,3 +517,30 @@ export async function fetchMq135Heatmap(floorplanId: number): Promise<Mq135Heatm
   );
   return handleJson<Mq135HeatmapPoint[]>(res);
 }
+
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+
+export type AlertSeverity = "warning" | "critical";
+export type AlertType     = "never_scanned" | "offline" | "weak_signal";
+
+export type Alert = {
+  scan_point_id: number;
+  label:         string;
+  node:          string;
+  floorplan_id:  number;
+  floor_name:    string;
+  building_id:   number;
+  building_name: string;
+  severity:      AlertSeverity;
+  type:          AlertType;
+  message:       string;
+  last_scan_at:  string | null;
+};
+
+export async function fetchAlerts(): Promise<Alert[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const res  = await fetch(`${base}/alerts`, { cache: "no-store" });
+  const data = await handleJson<{ alerts: Alert[] }>(res);
+  return data.alerts ?? [];
+}

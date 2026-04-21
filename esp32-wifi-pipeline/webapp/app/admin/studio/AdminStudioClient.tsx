@@ -24,6 +24,8 @@ import {
   type Device,
 } from "@/lib/api";
 import { collectExportData, exportCSV, exportPPTX } from "@/lib/exportReport";
+import { useAlerts } from "@/lib/useAlerts";
+import type { Alert } from "@/lib/api";
 
 async function fetchKnownNodes(): Promise<string[]> {
   const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
@@ -108,6 +110,7 @@ export default function AdminStudioClient() {
   const [renamingFloor,        setRenamingFloor]        = useState(false);
   const [showExportMenu,       setShowExportMenu]       = useState(false);
   const [exporting,            setExporting]            = useState(false);
+  const [showAlerts,           setShowAlerts]           = useState(false);
   const [showDeleteBldgModal,  setShowDeleteBldgModal]  = useState(false);
   const [deletingBuilding,     setDeletingBuilding]    = useState(false);
   const [showDeleteFloorModal, setShowDeleteFloorModal] = useState(false);
@@ -344,12 +347,21 @@ export default function AdminStudioClient() {
     finally { setUploadingFloor(false); }
   }
 
+  // ── Alerts ─────────────────────────────────────────────────────────────────
+  const alerts = useAlerts(30_000);
+  const criticalCount = alerts.filter(a => a.severity === "critical").length;
+  const warningCount  = alerts.filter(a => a.severity === "warning").length;
+  const totalAlerts   = alerts.length;
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const filteredBuildings = buildings.filter(b =>
     b.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
   const assignedDevice  = selectedPoint ? devices.find(d => d.scan_point_id === selectedPoint.id) ?? null : null;
   const assignedCount   = devices.filter(d => d.is_active).length;
+  const pointAlerts: Alert[] = selectedPoint
+    ? alerts.filter(a => a.scan_point_id === selectedPoint.id)
+    : [];
 
   // ═══════════════════════════════════════════════════════════════════════════
   // JSX
@@ -389,6 +401,49 @@ export default function AdminStudioClient() {
         {/* Controls */}
         <div style={css.topBarRight}>
           <ModeToggle mode={mode} onChange={setMode} />
+
+          {/* Alert bell */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowAlerts(v => !v)}
+              title={totalAlerts === 0 ? "No alerts" : `${totalAlerts} alert${totalAlerts !== 1 ? "s" : ""}`}
+              style={{ position:"relative", background:"none", border:"1px solid", borderColor: criticalCount > 0 ? "rgba(239,68,68,0.4)" : warningCount > 0 ? "rgba(251,191,36,0.4)" : "rgba(255,255,255,0.1)", borderRadius:6, cursor:"pointer", color: criticalCount > 0 ? "#f87171" : warningCount > 0 ? "#fbbf24" : "#475569", fontSize:"1rem", padding:"0.15rem 0.5rem", lineHeight:1, transition:"all 0.15s" }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "none")}
+            >
+              🔔
+              {totalAlerts > 0 && (
+                <span style={{ position:"absolute", top:-5, right:-5, background: criticalCount > 0 ? "#ef4444" : "#f59e0b", color:"#fff", borderRadius:"50%", fontSize:"0.6rem", fontWeight:700, minWidth:16, height:16, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 3px", lineHeight:1 }}>
+                  {totalAlerts > 99 ? "99+" : totalAlerts}
+                </span>
+              )}
+            </button>
+            {showAlerts && (
+              <div style={{ position:"absolute", top:"calc(100% + 6px)", right:0, background:"#0f172a", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, boxShadow:"0 12px 32px rgba(0,0,0,0.6)", zIndex:200, width:340, maxHeight:420, overflowY:"auto" }}
+                onMouseLeave={() => setShowAlerts(false)}
+              >
+                <div style={{ padding:"0.65rem 0.85rem 0.4rem", borderBottom:"1px solid rgba(255,255,255,0.07)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <span style={{ fontSize:"0.78rem", fontWeight:700, color:"#f1f5f9" }}>Alerts</span>
+                  {totalAlerts > 0 && (
+                    <span style={{ fontSize:"0.7rem", color:"#64748b" }}>{criticalCount} critical · {warningCount} warning</span>
+                  )}
+                </div>
+                {alerts.length === 0 ? (
+                  <div style={{ padding:"1.2rem 0.85rem", textAlign:"center", fontSize:"0.75rem", color:"#475569" }}>✓ No active alerts</div>
+                ) : (
+                  alerts.map((a, i) => (
+                    <div key={i} style={{ padding:"0.5rem 0.85rem", borderBottom:"1px solid rgba(255,255,255,0.04)", display:"flex", gap:"0.55rem", alignItems:"flex-start" }}>
+                      <span style={{ fontSize:"0.85rem", marginTop:1 }}>{a.severity === "critical" ? "🔴" : "🟡"}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:"0.74rem", color:"#e2e8f0", fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{a.message}</div>
+                        <div style={{ fontSize:"0.67rem", color:"#475569", marginTop:2 }}>{a.building_name} › {a.floor_name}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Export dropdown — visible when a floor plan is loaded */}
           {selectedFloorplan && (
@@ -637,6 +692,18 @@ export default function AdminStudioClient() {
                     </p>
                   )}
                 </Card>
+
+                {/* Point-level alerts */}
+                {pointAlerts.length > 0 && (
+                  <div style={{ display:"flex", flexDirection:"column", gap:"0.35rem" }}>
+                    {pointAlerts.map((a, i) => (
+                      <div key={i} style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", background: a.severity === "critical" ? "rgba(239,68,68,0.08)" : "rgba(251,191,36,0.07)", border:"1px solid", borderColor: a.severity === "critical" ? "rgba(239,68,68,0.3)" : "rgba(251,191,36,0.3)", borderRadius:7, padding:"0.45rem 0.6rem" }}>
+                        <span style={{ fontSize:"0.8rem", marginTop:1 }}>{a.severity === "critical" ? "🔴" : "🟡"}</span>
+                        <span style={{ fontSize:"0.72rem", color: a.severity === "critical" ? "#fca5a5" : "#fde68a", lineHeight:1.4 }}>{a.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Delete */}
                 <button onClick={handleDeletePoint} disabled={deletingPoint} style={css.deleteBtn}>

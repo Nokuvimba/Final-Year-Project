@@ -66,6 +66,19 @@ export async function updateFloorPlan(
   return data.floorplan;
 }
 
+export async function renameFloorPlan(
+  floorplanId: number,
+  floorName: string
+): Promise<FloorPlan> {
+  const res = await fetch(`${API_BASE}/floorplans/${floorplanId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ floor_name: floorName }),
+  });
+  const data = await handleJson<{ floorplan: FloorPlan }>(res);
+  return data.floorplan;
+}
+
 export async function deleteFloorPlan(floorplanId: number): Promise<void> {
   const res = await fetch(`${API_BASE}/floorplans/${floorplanId}`, {
     method: "DELETE",

@@ -47,6 +47,7 @@ export {
   uploadFloorPlan,
   createFloorPlanFromUrl,
   updateFloorPlan,
+  renameFloorPlan,
   deleteFloorPlan,
 } from "./floorplans";
 

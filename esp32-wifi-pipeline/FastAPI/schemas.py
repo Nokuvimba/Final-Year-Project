@@ -46,6 +46,10 @@ class RoomUpdate(BaseModel):
     room_type: Optional[str] = None
 
 
+class FloorPlanUpdate(BaseModel):
+    floor_name: Optional[str] = None
+
+
 class FloorPlanUrlCreate(BaseModel):
     building_id: int
     floor_name: str

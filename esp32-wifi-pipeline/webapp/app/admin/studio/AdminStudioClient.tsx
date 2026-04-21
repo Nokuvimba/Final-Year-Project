@@ -10,12 +10,14 @@ import {
   fetchBuildings,
   fetchBuildingFloorPlans,
   createBuilding,
+  updateBuilding,
   fetchScanPoints,
   assignDeviceToPoint,
   clearDevicePoint,
   updateScanPoint,
   deleteScanPoint,
   uploadFloorPlan,
+  renameFloorPlan,
   type Building,
   type FloorPlan,
   type ScanPoint,
@@ -95,8 +97,14 @@ export default function AdminStudioClient() {
   const [deletingPoint, setDeletingPoint] = useState(false);
 
   // ── Modals ─────────────────────────────────────────────────────────────────
-  const [showBuildingModal,  setShowBuildingModal]  = useState(false);
-  const [showFloorModal,     setShowFloorModal]     = useState(false);
+  const [showBuildingModal,    setShowBuildingModal]    = useState(false);
+  const [showFloorModal,       setShowFloorModal]       = useState(false);
+  const [showRenameBldgModal,  setShowRenameBldgModal]  = useState(false);
+  const [showRenameFloorModal, setShowRenameFloorModal] = useState(false);
+  const [renameBldgDraft,      setRenameBldgDraft]      = useState("");
+  const [renameFloorDraft,     setRenameFloorDraft]     = useState("");
+  const [renamingBldg,         setRenamingBldg]         = useState(false);
+  const [renamingFloor,        setRenamingFloor]        = useState(false);
   const [showDeleteBldgModal,  setShowDeleteBldgModal]  = useState(false);
   const [deletingBuilding,     setDeletingBuilding]    = useState(false);
   const [showDeleteFloorModal, setShowDeleteFloorModal] = useState(false);
@@ -281,6 +289,30 @@ export default function AdminStudioClient() {
     finally { setCreatingBuilding(false); }
   }
 
+  async function handleRenameBuilding() {
+    if (!selectedBuilding || !renameBldgDraft.trim()) return;
+    setRenamingBldg(true);
+    try {
+      const updated = await updateBuilding(selectedBuilding.id, { name: renameBldgDraft.trim() });
+      setBuildings(prev => prev.map(b => b.id === updated.id ? updated : b));
+      setSelectedBuilding(updated);
+      setShowRenameBldgModal(false);
+    } catch (e) { console.error(e); }
+    finally { setRenamingBldg(false); }
+  }
+
+  async function handleRenameFloor() {
+    if (!selectedFloorplan || !renameFloorDraft.trim()) return;
+    setRenamingFloor(true);
+    try {
+      const updated = await renameFloorPlan(selectedFloorplan.id, renameFloorDraft.trim());
+      setFloorplans(prev => prev.map(fp => fp.id === updated.id ? updated : fp));
+      setSelectedFloorplan(updated);
+      setShowRenameFloorModal(false);
+    } catch (e) { console.error(e); }
+    finally { setRenamingFloor(false); }
+  }
+
   async function handleUploadFloor() {
     if (!selectedBuilding || !floorFile || !newFloorName.trim()) return;
     setUploadingFloor(true);
@@ -402,8 +434,29 @@ export default function AdminStudioClient() {
           <div style={css.canvasArea}>
             {/* Breadcrumb */}
             <div style={css.breadcrumb}>
-              <span style={css.breadcrumbBuilding}>{selectedBuilding?.name ?? "—"}</span>
-              {selectedFloorplan && <><span style={css.breadcrumbSep}>›</span><span style={css.breadcrumbFloor}>{selectedFloorplan.floor_name}</span></>}
+              {selectedBuilding ? (
+                <button
+                  title="Rename building"
+                  onClick={() => { setRenameBldgDraft(selectedBuilding.name); setShowRenameBldgModal(true); }}
+                  style={{ ...css.breadcrumbBuilding, background:"none", border:"none", cursor:"pointer", padding:0, display:"inline-flex", alignItems:"center", gap:4 }}
+                >
+                  {selectedBuilding.name}
+                  <span style={{ fontSize:"0.6rem", opacity:0.45 }}>✏</span>
+                </button>
+              ) : <span style={css.breadcrumbBuilding}>—</span>}
+              {selectedFloorplan && (
+                <>
+                  <span style={css.breadcrumbSep}>›</span>
+                  <button
+                    title="Rename floor plan"
+                    onClick={() => { setRenameFloorDraft(selectedFloorplan.floor_name); setShowRenameFloorModal(true); }}
+                    style={{ ...css.breadcrumbFloor, background:"none", border:"none", cursor:"pointer", padding:0, display:"inline-flex", alignItems:"center", gap:4 }}
+                  >
+                    {selectedFloorplan.floor_name}
+                    <span style={{ fontSize:"0.6rem", opacity:0.45 }}>✏</span>
+                  </button>
+                </>
+              )}
               <span style={{ marginLeft:"auto", color:"#334155", fontSize:"0.73rem" }}>
                 {scanPoints.length} point{scanPoints.length !== 1 ? "s" : ""} · {mode === "edit" ? "Edit mode" : "Signal view"}
               </span>
@@ -610,6 +663,44 @@ export default function AdminStudioClient() {
               style={{ background: deletingBuilding ? "#7f1d1d" : "#dc2626", border: "none", borderRadius: 8, color: "#fff", padding: "0.5rem 1.25rem", cursor: deletingBuilding ? "not-allowed" : "pointer", fontSize: "0.85rem", fontWeight: 700 }}
             >{deletingBuilding ? "Deleting…" : "Delete Building"}</button>
           </div>
+        </ModalShell>
+      )}
+
+      {showRenameBldgModal && (
+        <ModalShell title="Rename Building" onClose={() => !renamingBldg && setShowRenameBldgModal(false)}>
+          <input
+            value={renameBldgDraft}
+            onChange={e => setRenameBldgDraft(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleRenameBuilding()}
+            placeholder="New building name"
+            autoFocus
+            style={css.modalInput}
+          />
+          <ModalFooter
+            onCancel={() => setShowRenameBldgModal(false)}
+            onConfirm={handleRenameBuilding}
+            disabled={!renameBldgDraft.trim() || renamingBldg}
+            label={renamingBldg ? "Saving…" : "Save Name"}
+          />
+        </ModalShell>
+      )}
+
+      {showRenameFloorModal && (
+        <ModalShell title="Rename Floor Plan" onClose={() => !renamingFloor && setShowRenameFloorModal(false)}>
+          <input
+            value={renameFloorDraft}
+            onChange={e => setRenameFloorDraft(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleRenameFloor()}
+            placeholder="New floor name"
+            autoFocus
+            style={css.modalInput}
+          />
+          <ModalFooter
+            onCancel={() => setShowRenameFloorModal(false)}
+            onConfirm={handleRenameFloor}
+            disabled={!renameFloorDraft.trim() || renamingFloor}
+            label={renamingFloor ? "Saving…" : "Save Name"}
+          />
         </ModalShell>
       )}
 

@@ -19,7 +19,7 @@ from models import (
 from schemas import (
     BuildingCreate, BuildingUpdate,
     RoomCreate, RoomUpdate,
-    FloorPlanUrlCreate, HeatmapPoint,
+    FloorPlanUrlCreate, FloorPlanUpdate, HeatmapPoint,
 )
 
 
@@ -935,6 +935,18 @@ def update_floorplan(floorplan_id: int, payload: FloorPlanUrlCreate, db: Session
         raise HTTPException(status_code=404, detail="Floor plan not found")
     fp.floor_name = payload.floor_name
     fp.image_url = payload.image_url
+    db.commit()
+    db.refresh(fp)
+    return {"floorplan": {"id": fp.id, "building_id": fp.building_id, "floor_name": fp.floor_name, "image_url": fp.image_url, "created_at": fp.created_at}}
+
+
+@app.patch("/floorplans/{floorplan_id}")
+def rename_floorplan(floorplan_id: int, payload: FloorPlanUpdate, db: Session = Depends(get_db)):
+    fp = db.get(FloorPlanDB, floorplan_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Floor plan not found")
+    if payload.floor_name is not None:
+        fp.floor_name = payload.floor_name
     db.commit()
     db.refresh(fp)
     return {"floorplan": {"id": fp.id, "building_id": fp.building_id, "floor_name": fp.floor_name, "image_url": fp.image_url, "created_at": fp.created_at}}

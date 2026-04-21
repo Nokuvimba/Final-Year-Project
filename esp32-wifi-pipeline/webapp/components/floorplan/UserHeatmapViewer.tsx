@@ -8,6 +8,7 @@
 import { useEffect, useState, useRef } from "react";
 import { fetchFloorplanHeatmap, fetchWifiHistory, fetchDht22History, fetchDht22Heatmap, fetchMq135History, fetchMq135Heatmap } from "@/lib/api";
 import { useImageBounds, toPixel } from "@/lib/useImageBounds";
+import { useZoomPan } from "@/lib/useZoomPan";
 import type { HeatmapPoint, WifiHistoryBucket, TimeRange, Dht22Reading, Dht22HeatmapPoint, Mq135Reading, Mq135HeatmapPoint } from "@/lib/api";
 
 // ── Timestamp helpers ─────────────────────────────────────────────────────────
@@ -165,6 +166,7 @@ export default function UserHeatmapViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef       = useRef<HTMLImageElement>(null);
   const bounds       = useImageBounds(containerRef, imgRef);
+  const { transform, zoomIn, zoomOut, reset, handleMouseDown } = useZoomPan(containerRef);
 
   // Derive last scan time from fresh history (not stale heatmap data)
   const lastScanAt: string | null = history.length > 0
@@ -321,50 +323,58 @@ export default function UserHeatmapViewer({
           ref={containerRef}
           style={{ flex: 1, position: "relative", overflow: "hidden", background: T.mapBg, transition: "flex 0.3s ease" }}
           onClick={() => setActivePoint(null)}
+          onMouseDown={handleMouseDown}
         >
-          <img
-            ref={imgRef}
-            src={floorplanImageUrl}
-            alt="Floor plan"
-            draggable={false}
-            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-          />
+          {/* ── Transform wrapper (image + blobs move together) ── */}
+          <div style={{
+            width: "100%", height: "100%",
+            transform, transformOrigin: "0 0",
+            willChange: "transform", position: "relative",
+          }}>
+            <img
+              ref={imgRef}
+              src={floorplanImageUrl}
+              alt="Floor plan"
+              draggable={false}
+              style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+            />
+
+            {/* Heatmap blobs */}
+            {!loading && points.map(pt => {
+              if (pt.x == null || pt.y == null) return null;
+              const color    = getBlobColor(pt);
+              const isActive = activePoint?.room_id === pt.room_id;
+              const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
+              const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
+              return (
+                <div
+                  key={pt.room_id}
+                  onClick={e => { e.stopPropagation(); handleBlobClick(pt); }}
+                  style={{
+                    position: "absolute",
+                    left,
+                    top,
+                    transform: "translate(-50%, -50%)",
+                    width: isActive ? 80 : 64,
+                    height: isActive ? 80 : 64,
+                    borderRadius: "50%",
+                    background: `radial-gradient(circle, ${color}55 0%, ${color}22 50%, transparent 70%)`,
+                    boxShadow: isActive
+                      ? `0 0 40px 20px ${color}55, 0 0 80px 40px ${color}22`
+                      : `0 0 30px 15px ${color}44, 0 0 60px 30px ${color}18`,
+                    cursor: "pointer", transition: "all 0.2s ease",
+                    zIndex: isActive ? 10 : 5,
+                  }}
+                />
+              );
+            })}
+          </div>{/* end transform wrapper */}
 
           {loading && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
               <span style={{ color: "#94a3b8", fontSize: "0.82rem" }}>Loading signal data…</span>
             </div>
           )}
-
-          {/* Heatmap blobs */}
-          {!loading && points.map(pt => {
-            if (pt.x == null || pt.y == null) return null;
-            const color    = getBlobColor(pt);
-            const isActive = activePoint?.room_id === pt.room_id;
-            const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
-            const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
-            return (
-              <div
-                key={pt.room_id}
-                onClick={e => { e.stopPropagation(); handleBlobClick(pt); }}
-                style={{
-                  position: "absolute",
-                  left,
-                  top,
-                  transform: "translate(-50%, -50%)",
-                  width: isActive ? 80 : 64,
-                  height: isActive ? 80 : 64,
-                  borderRadius: "50%",
-                  background: `radial-gradient(circle, ${color}55 0%, ${color}22 50%, transparent 70%)`,
-                  boxShadow: isActive
-                    ? `0 0 40px 20px ${color}55, 0 0 80px 40px ${color}22`
-                    : `0 0 30px 15px ${color}44, 0 0 60px 30px ${color}18`,
-                  cursor: "pointer", transition: "all 0.2s ease",
-                  zIndex: isActive ? 10 : 5,
-                }}
-              />
-            );
-          })}
 
           {/* Mode-aware legend — top right */}
           {(() => {
@@ -374,7 +384,7 @@ export default function UserHeatmapViewer({
                 position: "absolute", top: 12, right: 12,
                 background: T.legendBg, borderRadius: 10,
                 padding: "0.5rem 0.75rem", boxShadow: "0 2px 12px rgba(0,0,0,0.1)",
-                display: "flex", flexDirection: "column", gap: 4,
+                display: "flex", flexDirection: "column", gap: 4, zIndex: 20,
               }}>
                 <span style={{ fontSize: "0.68rem", fontWeight: 700, color: T.legendTitleCol, marginBottom: 2 }}>{leg.title}</span>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -390,14 +400,26 @@ export default function UserHeatmapViewer({
           })()}
 
           {/* Zoom controls */}
-          <div style={{ position: "absolute", bottom: 16, right: 16, display: "flex", flexDirection: "column", gap: 4 }}>
-            {["⊕", "⊖", "⛶"].map((icon, i) => (
-              <button key={i} style={{
-                width: 32, height: 32, borderRadius: 6, background: T.zoomBg,
-                border: "1px solid", borderColor: T.zoomBorder,
-                boxShadow: "0 1px 4px rgba(0,0,0,0.12)", cursor: "pointer",
-                fontSize: "0.9rem", display: "flex", alignItems: "center", justifyContent: "center", color: T.zoomCol,
-              }}>{icon}</button>
+          <div style={{ position: "absolute", bottom: 16, right: 16, display: "flex", flexDirection: "column", gap: 4, zIndex: 20 }}>
+            {[
+              { icon: "⊕", title: "Zoom in",    action: zoomIn  },
+              { icon: "⊖", title: "Zoom out",   action: zoomOut },
+              { icon: "⛶", title: "Reset zoom", action: reset   },
+            ].map(({ icon, title, action }) => (
+              <button
+                key={title}
+                title={title}
+                onClick={e => { e.stopPropagation(); action(); }}
+                style={{
+                  width: 32, height: 32, borderRadius: 6, background: T.zoomBg,
+                  border: "1px solid", borderColor: T.zoomBorder,
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.12)", cursor: "pointer",
+                  fontSize: "0.9rem", display: "flex", alignItems: "center", justifyContent: "center",
+                  color: T.zoomCol,
+                }}
+              >
+                {icon}
+              </button>
             ))}
           </div>
 

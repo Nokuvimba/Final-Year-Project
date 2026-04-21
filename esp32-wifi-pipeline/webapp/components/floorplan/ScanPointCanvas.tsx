@@ -3,11 +3,12 @@
 import { useRef, useState } from "react";
 import { createScanPoint, updateScanPoint } from "@/lib/api";
 import type { ScanPoint } from "@/lib/api";
+import { useImageBounds, toPixel, toNorm } from "@/lib/useImageBounds";
 
 interface Props {
   floorplanId: number;
   floorplanImageUrl: string;
-  scanPoints: ScanPoint[];           // owned by parent — passed down as prop
+  scanPoints: ScanPoint[];
   selectedPointId: number | null;
   onPointCreated: (pt: ScanPoint) => void;
   onPointSelected: (pt: ScanPoint | null) => void;
@@ -29,16 +30,18 @@ export default function ScanPointCanvas({
   const imgRef       = useRef<HTMLImageElement>(null);
   const [placing,  setPlacing]  = useState(false);
   const [dragging, setDragging] = useState<number | null>(null);
+  const [dragPos,  setDragPos]  = useState<Record<number, { x: number; y: number }>>({});
 
-  // Local drag position overrides — only active mid-drag, never stored in parent
-  const [dragPos, setDragPos] = useState<Record<number, { x: number; y: number }>>({});
+  const bounds = useImageBounds(containerRef, imgRef);
 
-  // ── Click on canvas → place new pin ──────────────────────────────────────
+  // ── Click on canvas → place new pin ────────────────────────────────────────
   async function handleCanvasClick(e: React.MouseEvent<HTMLDivElement>) {
     if (dragging !== null) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top)  / rect.height;
+    const rawX = e.clientX - rect.left;
+    const rawY = e.clientY - rect.top;
+    const x = bounds ? toNorm(rawX, bounds.offsetX, bounds.renderedW) : rawX / rect.width;
+    const y = bounds ? toNorm(rawY, bounds.offsetY, bounds.renderedH) : rawY / rect.height;
 
     setPlacing(true);
     try {
@@ -48,7 +51,7 @@ export default function ScanPointCanvas({
     finally { setPlacing(false); }
   }
 
-  // ── Drag a pin to reposition ──────────────────────────────────────────────
+  // ── Drag a pin to reposition ────────────────────────────────────────────────
   function handlePinMouseDown(e: React.MouseEvent, pt: ScanPoint) {
     e.stopPropagation();
     setDragging(pt.id);
@@ -59,8 +62,10 @@ export default function ScanPointCanvas({
 
     function onMove(me: MouseEvent) {
       const rect = container!.getBoundingClientRect();
-      const x = Math.min(1, Math.max(0, (me.clientX - rect.left) / rect.width));
-      const y = Math.min(1, Math.max(0, (me.clientY - rect.top)  / rect.height));
+      const rawX = me.clientX - rect.left;
+      const rawY = me.clientY - rect.top;
+      const x = bounds ? toNorm(rawX, bounds.offsetX, bounds.renderedW) : Math.min(1, Math.max(0, rawX / rect.width));
+      const y = bounds ? toNorm(rawY, bounds.offsetY, bounds.renderedH) : Math.min(1, Math.max(0, rawY / rect.height));
       setDragPos(prev => ({ ...prev, [pt.id]: { x, y } }));
     }
 
@@ -71,8 +76,10 @@ export default function ScanPointCanvas({
       setDragPos(prev => { const n = { ...prev }; delete n[pt.id]; return n; });
 
       const rect = container!.getBoundingClientRect();
-      const x = Math.min(1, Math.max(0, (me.clientX - rect.left) / rect.width));
-      const y = Math.min(1, Math.max(0, (me.clientY - rect.top)  / rect.height));
+      const rawX = me.clientX - rect.left;
+      const rawY = me.clientY - rect.top;
+      const x = bounds ? toNorm(rawX, bounds.offsetX, bounds.renderedW) : Math.min(1, Math.max(0, rawX / rect.width));
+      const y = bounds ? toNorm(rawY, bounds.offsetY, bounds.renderedH) : Math.min(1, Math.max(0, rawY / rect.height));
       try {
         const updated = await updateScanPoint(pt.id, { x, y });
         onPointUpdated(updated);
@@ -83,7 +90,6 @@ export default function ScanPointCanvas({
     window.addEventListener("mouseup",   onUp);
   }
 
-  // Apply local dragPos overrides on top of parent-owned scanPoints
   const displayPoints = scanPoints.map(p =>
     dragPos[p.id] ? { ...p, ...dragPos[p.id] } : p
   );
@@ -111,6 +117,8 @@ export default function ScanPointCanvas({
       {displayPoints.map(pt => {
         const isSelected = pt.id === selectedPointId;
         const isDragging = pt.id === dragging;
+        const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
+        const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
         return (
           <div
             key={pt.id}
@@ -118,15 +126,15 @@ export default function ScanPointCanvas({
             onClick={e => { e.stopPropagation(); onPointSelected(pt); }}
             style={{
               position: "absolute",
-              left: `${pt.x * 100}%`,
-              top:  `${pt.y * 100}%`,
+              left,
+              top,
               transform: "translate(-50%, -100%)",
               cursor: isDragging ? "grabbing" : "grab",
               zIndex: isSelected ? 20 : 10,
               transition: isDragging ? "none" : "left 0.1s, top 0.1s",
             }}
           >
-            {/* Pin body — teardrop shape */}
+            {/* Pin body */}
             <div style={{
               width:  isSelected ? 22 : 16,
               height: isSelected ? 22 : 16,
@@ -167,7 +175,6 @@ export default function ScanPointCanvas({
         );
       })}
 
-      {/* First-time hint */}
       {scanPoints.length === 0 && !placing && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <div style={{ background: "rgba(15,25,41,0.85)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "0.6rem 1.1rem", fontSize: "0.78rem", color: "#475569" }}>

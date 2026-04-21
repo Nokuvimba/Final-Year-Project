@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { fetchFloorplanHeatmap } from "@/lib/api";
 import type { HeatmapPoint, WifiHistoryBucket, TimeRange } from "@/lib/api";
 import { useImageBounds, toPixel } from "@/lib/useImageBounds";
+import { useZoomPan } from "@/lib/useZoomPan";
 
 interface Props {
   floorplanId: number;
@@ -57,6 +58,7 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef       = useRef<HTMLImageElement>(null);
   const bounds       = useImageBounds(containerRef, imgRef);
+  const { scale, panX, panY, transform, zoomIn, zoomOut, reset, handleMouseDown } = useZoomPan(containerRef);
 
   useEffect(() => {
     setLoading(true);
@@ -91,11 +93,15 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
     const container = containerRef.current;
     if (container) {
       const rect = container.getBoundingClientRect();
-      const blobX = (pt.x ?? 0) * rect.width;
-      const blobY = (pt.y ?? 0) * rect.height;
+      // Blob CSS position in pre-transform space (accounts for objectFit letterboxing)
+      const blobCssX = bounds ? bounds.offsetX + (pt.x ?? 0) * bounds.renderedW : (pt.x ?? 0) * rect.width;
+      const blobCssY = bounds ? bounds.offsetY + (pt.y ?? 0) * bounds.renderedH : (pt.y ?? 0) * rect.height;
+      // Apply zoom/pan transform: translate(panX, panY) scale(scale) origin 0 0
+      const blobScreenX = panX + blobCssX * scale;
+      const blobScreenY = panY + blobCssY * scale;
       // Card is 260px wide — prefer right of blob, clamp to container
-      const cardLeft = Math.min(blobX + 18, rect.width - 276);
-      const cardTop  = Math.max(blobY - 60, 8);
+      const cardLeft = Math.min(blobScreenX + 18, rect.width - 276);
+      const cardTop  = Math.max(blobScreenY - 60, 8);
       setCardPos({ top: cardTop, left: cardLeft });
     }
     setActivePoint(pt);
@@ -133,17 +139,58 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
     <div
       ref={containerRef}
       style={{ position: "relative", flex: 1, borderRadius: 10, overflow: "hidden", background: "#0a1628" }}
+      onMouseDown={handleMouseDown}
     >
-      <img
-        ref={imgRef}
-        src={floorplanImageUrl}
-        alt="Floor plan"
-        draggable={false}
-        style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-      />
+      {/* ── Transform wrapper (image + blobs move together) ── */}
+      <div style={{
+        width: "100%", height: "100%",
+        transform, transformOrigin: "0 0",
+        willChange: "transform", position: "relative",
+      }}>
+        <img
+          ref={imgRef}
+          src={floorplanImageUrl}
+          alt="Floor plan"
+          draggable={false}
+          style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+        />
+
+        {/* Heatmap blobs */}
+        {points.map(pt => {
+          if (pt.x == null || pt.y == null) return null;
+          const color    = pt.level ? LEVEL_COLOR[pt.level] : "#475569";
+          const isActive = activePoint?.room_id === pt.room_id;
+          const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
+          const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
+          return (
+            <div
+              key={pt.room_id}
+              data-blob
+              onClick={e => handleBlobClick(e, pt)}
+              style={{
+                position: "absolute",
+                left,
+                top,
+                transform: "translate(-50%, -50%)",
+                width:  isActive ? 110 : 88,
+                height: isActive ? 110 : 88,
+                borderRadius: "50%",
+                background: `radial-gradient(circle, ${color}55 0%, ${color}22 45%, transparent 70%)`,
+                boxShadow: isActive
+                  ? `0 0 55px 28px ${color}55, 0 0 110px 55px ${color}22`
+                  : `0 0 44px 22px ${color}44, 0 0 88px 44px ${color}18`,
+                border: "none",
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+                zIndex: isActive ? 20 : 10,
+              }}
+            />
+          );
+        })}
+      </div>{/* end transform wrapper */}
 
       {loading && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <span style={{ color: "#475569", fontSize: "0.82rem" }}>Loading signal data…</span>
         </div>
       )}
@@ -156,39 +203,31 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
         </div>
       )}
 
-      {/* Heatmap blobs */}
-      {points.map(pt => {
-        if (pt.x == null || pt.y == null) return null;
-        const color    = pt.level ? LEVEL_COLOR[pt.level] : "#475569";
-        const isActive = activePoint?.room_id === pt.room_id;
-        const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
-        const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
-        return (
-          <div
-            key={pt.room_id}
-            data-blob
-            onClick={e => handleBlobClick(e, pt)}
+      {/* ── Zoom controls ── */}
+      <div style={{ position: "absolute", bottom: 12, left: 12, display: "flex", flexDirection: "column", gap: 4, zIndex: 30 }}>
+        {[
+          { icon: "⊕", title: "Zoom in",    action: zoomIn  },
+          { icon: "⊖", title: "Zoom out",   action: zoomOut },
+          { icon: "⛶", title: "Reset zoom", action: reset   },
+        ].map(({ icon, title, action }) => (
+          <button
+            key={title}
+            title={title}
+            onClick={e => { e.stopPropagation(); action(); }}
             style={{
-              position: "absolute",
-              left,
-              top,
-              transform: "translate(-50%, -50%)",
-              // Large diffuse blob — radial gradient + multi-layer box-shadow
-              width:  isActive ? 110 : 88,
-              height: isActive ? 110 : 88,
-              borderRadius: "50%",
-              background: `radial-gradient(circle, ${color}55 0%, ${color}22 45%, transparent 70%)`,
-              boxShadow: isActive
-                ? `0 0 55px 28px ${color}55, 0 0 110px 55px ${color}22`
-                : `0 0 44px 22px ${color}44, 0 0 88px 44px ${color}18`,
-              border: "none",
-              cursor: "pointer",
-              transition: "all 0.2s ease",
-              zIndex: isActive ? 20 : 10,
+              width: 32, height: 32, borderRadius: 6,
+              background: "rgba(13,22,38,0.88)",
+              border: "1px solid rgba(255,255,255,0.1)",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+              cursor: "pointer", fontSize: "0.9rem",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#94a3b8",
             }}
-          />
-        );
-      })}
+          >
+            {icon}
+          </button>
+        ))}
+      </div>
 
       {/* ── Sensor card ── */}
       {activePoint && cardPos && (

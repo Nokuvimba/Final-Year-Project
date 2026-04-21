@@ -59,6 +59,7 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
   const imgRef       = useRef<HTMLImageElement>(null);
   const bounds       = useImageBounds(containerRef, imgRef);
   const { scale, panX, panY, transform, zoomIn, zoomOut, reset, handleMouseDown } = useZoomPan(containerRef);
+  const [live, setLive] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -68,6 +69,19 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
       .then(setPoints)
       .catch(console.error)
       .finally(() => setLoading(false));
+  }, [floorplanId]);
+
+  // SSE subscription — re-fetch signal heatmap when new scans arrive
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const es   = new EventSource(`${base}/events/floorplan/${floorplanId}/heatmap`);
+    setLive(false);
+    es.onopen    = () => setLive(true);
+    es.onmessage = () => {
+      fetchFloorplanHeatmap(floorplanId).then(setPoints).catch(console.error);
+    };
+    es.onerror = () => { setLive(false); es.close(); };
+    return () => { es.close(); setLive(false); };
   }, [floorplanId]);
 
   // Close card on click outside
@@ -341,7 +355,7 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
         background: "rgba(15,25,41,0.88)",
         borderWidth: 1, borderStyle: "solid", borderColor: "rgba(255,255,255,0.08)",
         borderRadius: 8, padding: "0.5rem 0.75rem",
-        display: "flex", flexDirection: "column", gap: 5,
+        display: "flex", flexDirection: "column", gap: 5, zIndex: 20,
       }}>
         {Object.entries(LEVEL_COLOR).map(([level, color]) => (
           <div key={level} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -349,8 +363,9 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
             <span style={{ fontSize: "0.64rem", color: "#64748b" }}>{LEVEL_LABEL[level]}</span>
           </div>
         ))}
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 3, paddingTop: 5, fontSize: "0.62rem", color: "#334155" }}>
-          Click a point for details
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", marginTop: 3, paddingTop: 5, display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: live ? "#22c55e" : "#475569", boxShadow: live ? "0 0 5px #22c55e" : "none", flexShrink: 0 }} />
+          <span style={{ fontSize: "0.62rem", color: live ? "#22c55e" : "#334155" }}>{live ? "Live" : "Connecting…"}</span>
         </div>
       </div>
 

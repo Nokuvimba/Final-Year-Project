@@ -1,17 +1,18 @@
 # main.py
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
-import math, os, uuid
+import asyncio, json, math, os, uuid
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Body, HTTPException, Query, Depends, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from database import Base, engine, get_db
+from database import Base, engine, get_db, SessionLocal
 from models import (
     WifiScanDB, BuildingDB, RoomDB,
     FloorPlanDB, ScanPointDB, Dht22ReadingDB, Mq135ReadingDB,
@@ -1154,3 +1155,83 @@ def get_floorplan_heatmap(floorplan_id: int, db: Session = Depends(get_db)):
         )
         for row in result
     ]
+
+# ── Server-Sent Events — real-time heatmap updates ───────────────────────────
+#
+# GET /events/floorplan/{id}/heatmap
+#
+# Clients subscribe once per floor plan.  Every 3 seconds the server checks
+# whether any new wifi_scan, dht22_reading, or mq135_reading rows have arrived
+# for scan points on that floor plan.  If the latest timestamp has advanced it
+# emits a "data" event; otherwise it emits a keep-alive comment so the
+# connection stays open through proxies that would otherwise time it out.
+#
+# The frontend simply re-fetches the existing heatmap endpoint on each event —
+# no data is duplicated inside the event stream itself.
+
+def _latest_ingest_ts(floorplan_id: int):
+    """
+    Return the most recent received_at across all three sensor tables for
+    scan points that belong to floorplan_id.  Called in a threadpool so it
+    is safe to use a plain sync SQLAlchemy session inside an async context.
+    """
+    db = SessionLocal()
+    try:
+        wifi_ts = (
+            db.query(func.max(WifiScanDB.received_at))
+            .join(ScanPointDB, WifiScanDB.scan_point_id == ScanPointDB.id)
+            .filter(ScanPointDB.floorplan_id == floorplan_id)
+            .scalar()
+        )
+        dht_ts = (
+            db.query(func.max(Dht22ReadingDB.received_at))
+            .join(ScanPointDB, Dht22ReadingDB.scan_point_id == ScanPointDB.id)
+            .filter(ScanPointDB.floorplan_id == floorplan_id)
+            .scalar()
+        )
+        mq_ts = (
+            db.query(func.max(Mq135ReadingDB.received_at))
+            .join(ScanPointDB, Mq135ReadingDB.scan_point_id == ScanPointDB.id)
+            .filter(ScanPointDB.floorplan_id == floorplan_id)
+            .scalar()
+        )
+        candidates = [t for t in [wifi_ts, dht_ts, mq_ts] if t is not None]
+        return max(candidates) if candidates else None
+    finally:
+        db.close()
+
+
+@app.get("/events/floorplan/{floorplan_id}/heatmap")
+async def sse_heatmap_updates(floorplan_id: int):
+    """
+    SSE stream for a single floor plan.  Emits ``data: {"ts": "<ISO>"}`` when
+    new sensor data arrives; emits ``: keep-alive`` comments otherwise.
+
+    Clients should close and re-open the connection if they navigate away.
+    """
+    async def generate():
+        last_ts = None
+        while True:
+            await asyncio.sleep(3)
+            try:
+                latest = await asyncio.get_event_loop().run_in_executor(
+                    None, _latest_ingest_ts, floorplan_id
+                )
+                if latest is not None and latest != last_ts:
+                    last_ts = latest
+                    payload = json.dumps({"ts": latest.isoformat()})
+                    yield f"data: {payload}\n\n"
+                else:
+                    # Keep-alive comment — not delivered to onmessage
+                    yield ": keep-alive\n\n"
+            except Exception:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx proxy buffering
+        },
+    )

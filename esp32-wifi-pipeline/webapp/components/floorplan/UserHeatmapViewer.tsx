@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { fetchFloorplanHeatmap, fetchWifiHistory, fetchDht22History, fetchDht22Heatmap, fetchMq135History, fetchMq135Heatmap } from "@/lib/api";
+import { useImageBounds, toPixel } from "@/lib/useImageBounds";
 import type { HeatmapPoint, WifiHistoryBucket, TimeRange, Dht22Reading, Dht22HeatmapPoint, Mq135Reading, Mq135HeatmapPoint } from "@/lib/api";
 
 // ── Timestamp helpers ─────────────────────────────────────────────────────────
@@ -162,6 +163,8 @@ export default function UserHeatmapViewer({
   const [mq135Range,    setMq135Range]    = useState<string>("24h");
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef       = useRef<HTMLImageElement>(null);
+  const bounds       = useImageBounds(containerRef, imgRef);
 
   // Derive last scan time from fresh history (not stale heatmap data)
   const lastScanAt: string | null = history.length > 0
@@ -320,6 +323,7 @@ export default function UserHeatmapViewer({
           onClick={() => setActivePoint(null)}
         >
           <img
+            ref={imgRef}
             src={floorplanImageUrl}
             alt="Floor plan"
             draggable={false}
@@ -337,14 +341,16 @@ export default function UserHeatmapViewer({
             if (pt.x == null || pt.y == null) return null;
             const color    = getBlobColor(pt);
             const isActive = activePoint?.room_id === pt.room_id;
+            const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
+            const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
             return (
               <div
                 key={pt.room_id}
                 onClick={e => { e.stopPropagation(); handleBlobClick(pt); }}
                 style={{
                   position: "absolute",
-                  left: `${pt.x * 100}%`,
-                  top:  `${pt.y * 100}%`,
+                  left,
+                  top,
                   transform: "translate(-50%, -50%)",
                   width: isActive ? 80 : 64,
                   height: isActive ? 80 : 64,

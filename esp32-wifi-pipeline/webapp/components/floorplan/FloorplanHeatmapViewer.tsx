@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { fetchFloorplanHeatmap } from "@/lib/api";
 import type { HeatmapPoint, WifiHistoryBucket, TimeRange } from "@/lib/api";
+import { useImageBounds, toPixel } from "@/lib/useImageBounds";
 
 interface Props {
   floorplanId: number;
@@ -54,6 +55,8 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
   const [chartRange,  setChartRange]  = useState<TimeRange>("20m");
   const [chartLoading, setChartLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef       = useRef<HTMLImageElement>(null);
+  const bounds       = useImageBounds(containerRef, imgRef);
 
   useEffect(() => {
     setLoading(true);
@@ -132,6 +135,7 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
       style={{ position: "relative", flex: 1, borderRadius: 10, overflow: "hidden", background: "#0a1628" }}
     >
       <img
+        ref={imgRef}
         src={floorplanImageUrl}
         alt="Floor plan"
         draggable={false}
@@ -157,6 +161,8 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
         if (pt.x == null || pt.y == null) return null;
         const color    = pt.level ? LEVEL_COLOR[pt.level] : "#475569";
         const isActive = activePoint?.room_id === pt.room_id;
+        const left = bounds ? toPixel(pt.x, bounds.offsetX, bounds.renderedW) : `${pt.x * 100}%`;
+        const top  = bounds ? toPixel(pt.y, bounds.offsetY, bounds.renderedH) : `${pt.y * 100}%`;
         return (
           <div
             key={pt.room_id}
@@ -164,8 +170,8 @@ export default function FloorplanHeatmapViewer({ floorplanId, floorplanImageUrl 
             onClick={e => handleBlobClick(e, pt)}
             style={{
               position: "absolute",
-              left: `${pt.x * 100}%`,
-              top:  `${pt.y * 100}%`,
+              left,
+              top,
               transform: "translate(-50%, -50%)",
               // Large diffuse blob — radial gradient + multi-layer box-shadow
               width:  isActive ? 110 : 88,

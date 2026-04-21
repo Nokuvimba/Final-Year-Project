@@ -23,6 +23,7 @@ import {
   type ScanPoint,
   type Device,
 } from "@/lib/api";
+import { collectExportData, exportCSV, exportPPTX } from "@/lib/exportReport";
 
 async function fetchKnownNodes(): Promise<string[]> {
   const res = await fetch(`${API_BASE}/devices/known`, { cache: "no-store" });
@@ -105,6 +106,8 @@ export default function AdminStudioClient() {
   const [renameFloorDraft,     setRenameFloorDraft]     = useState("");
   const [renamingBldg,         setRenamingBldg]         = useState(false);
   const [renamingFloor,        setRenamingFloor]        = useState(false);
+  const [showExportMenu,       setShowExportMenu]       = useState(false);
+  const [exporting,            setExporting]            = useState(false);
   const [showDeleteBldgModal,  setShowDeleteBldgModal]  = useState(false);
   const [deletingBuilding,     setDeletingBuilding]    = useState(false);
   const [showDeleteFloorModal, setShowDeleteFloorModal] = useState(false);
@@ -313,6 +316,21 @@ export default function AdminStudioClient() {
     finally { setRenamingFloor(false); }
   }
 
+  async function handleExport(format: "csv" | "pptx") {
+    if (!selectedFloorplan || !selectedBuilding) return;
+    setShowExportMenu(false);
+    setExporting(true);
+    try {
+      const rows = await collectExportData(selectedFloorplan.id, scanPoints);
+      if (format === "csv") {
+        exportCSV(rows, selectedBuilding.name, selectedFloorplan.floor_name);
+      } else {
+        await exportPPTX(rows, selectedBuilding.name, selectedFloorplan.floor_name);
+      }
+    } catch (e) { console.error(e); }
+    finally { setExporting(false); }
+  }
+
   async function handleUploadFloor() {
     if (!selectedBuilding || !floorFile || !newFloorName.trim()) return;
     setUploadingFloor(true);
@@ -371,6 +389,40 @@ export default function AdminStudioClient() {
         {/* Controls */}
         <div style={css.topBarRight}>
           <ModeToggle mode={mode} onChange={setMode} />
+
+          {/* Export dropdown — visible when a floor plan is loaded */}
+          {selectedFloorplan && (
+            <div style={{ position: "relative" }}>
+              <button
+                onClick={() => setShowExportMenu(v => !v)}
+                disabled={exporting}
+                style={{ background:"none", borderWidth:1, borderStyle:"solid", borderColor:"rgba(96,165,250,0.35)", cursor:"pointer", color:"#60a5fa", fontSize:"0.75rem", padding:"0.28rem 0.6rem", borderRadius:6, lineHeight:1, transition:"all 0.15s", whiteSpace:"nowrap", opacity: exporting ? 0.6 : 1 }}
+                onMouseEnter={e => { if (!exporting) { e.currentTarget.style.background="rgba(96,165,250,0.1)"; e.currentTarget.style.borderColor="rgba(96,165,250,0.7)"; } }}
+                onMouseLeave={e => { e.currentTarget.style.background="none"; e.currentTarget.style.borderColor="rgba(96,165,250,0.35)"; }}
+              >
+                {exporting ? "Exporting…" : "↓ Export ▾"}
+              </button>
+              {showExportMenu && (
+                <div style={{ position:"absolute", top:"calc(100% + 4px)", right:0, background:"#0f172a", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, padding:"0.3rem 0", boxShadow:"0 8px 24px rgba(0,0,0,0.5)", zIndex:100, minWidth:170 }}>
+                  {[
+                    { label: "CSV (.csv)",         fmt: "csv"  as const, icon: "📄" },
+                    { label: "PowerPoint (.pptx)", fmt: "pptx" as const, icon: "📊" },
+                  ].map(({ label, fmt, icon }) => (
+                    <button
+                      key={fmt}
+                      onClick={() => handleExport(fmt)}
+                      style={{ display:"flex", alignItems:"center", gap:"0.5rem", width:"100%", background:"none", border:"none", cursor:"pointer", padding:"0.45rem 0.9rem", color:"#cbd5e1", fontSize:"0.78rem", textAlign:"left", transition:"background 0.12s" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.07)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                    >
+                      <span>{icon}</span>{label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {selectedBuilding && (
             <button
               onClick={() => setShowDeleteBldgModal(true)}

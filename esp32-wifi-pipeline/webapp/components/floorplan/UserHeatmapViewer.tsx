@@ -167,6 +167,7 @@ export default function UserHeatmapViewer({
   const imgRef       = useRef<HTMLImageElement>(null);
   const bounds       = useImageBounds(containerRef, imgRef);
   const { transform, zoomIn, zoomOut, reset, handleMouseDown } = useZoomPan(containerRef);
+  const [live,       setLive]       = useState(false);
 
   // Derive last scan time from fresh history (not stale heatmap data)
   const lastScanAt: string | null = history.length > 0
@@ -188,6 +189,25 @@ export default function UserHeatmapViewer({
       .then(setPoints)
       .catch(console.error)
       .finally(() => setLoading(false));
+  }, [floorplanId]);
+
+  // SSE subscription — re-fetch heatmap data when new scans arrive
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const es   = new EventSource(`${base}/events/floorplan/${floorplanId}/heatmap`);
+    setLive(false);
+    es.onopen    = () => setLive(true);
+    es.onmessage = () => {
+      fetchFloorplanHeatmap(floorplanId).then(setPoints).catch(console.error);
+      if (heatmapMode === "temp" || heatmapMode === "humidity") {
+        fetchDht22Heatmap(floorplanId).then(setDht22Points).catch(console.error);
+      }
+      if (heatmapMode === "air") {
+        fetchMq135Heatmap(floorplanId).then(setMq135Points).catch(console.error);
+      }
+    };
+    es.onerror = () => { setLive(false); es.close(); };
+    return () => { es.close(); setLive(false); };
   }, [floorplanId]);
 
   // Load WiFi history when point selected or range changes
@@ -290,7 +310,23 @@ export default function UserHeatmapViewer({
         padding: "0.5rem 1rem", gap: "0.5rem", flexShrink: 0,
         background: T.modeSwitcherBg,
         borderBottom: `1px solid ${T.modeSwitcherBorder}`,
+        position: "relative",
       }}>
+        {/* Live indicator */}
+        <div style={{
+          position: "absolute", left: "0.75rem",
+          display: "flex", alignItems: "center", gap: 5,
+        }}>
+          <div style={{
+            width: 7, height: 7, borderRadius: "50%",
+            background: live ? "#22c55e" : "#475569",
+            boxShadow: live ? "0 0 6px #22c55e" : "none",
+            transition: "all 0.4s",
+          }} />
+          <span style={{ fontSize: "0.65rem", color: live ? "#22c55e" : "#475569", fontWeight: 600 }}>
+            {live ? "Live" : "Connecting…"}
+          </span>
+        </div>
         {(["signal", "temp", "humidity", "air"] as HeatmapMode[]).map(mode => {
           const cfg = MODE_CONFIG[mode];
           const isActive = heatmapMode === mode;

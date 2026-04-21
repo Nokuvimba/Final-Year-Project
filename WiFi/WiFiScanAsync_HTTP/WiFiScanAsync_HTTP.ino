@@ -9,8 +9,8 @@
 // ===========================================================
 
 // Your Wi-Fi credentials
-const char* WIFI_SSID     =  "Three_7F2C30"; //"ATU-Galway-Guest-Aruba";//"Talie";  //"Three_7F2C30";
-const char* WIFI_PASSWORD =   "5sQuXs2zv22y2z5";// "225299";//"N7talie123"; //"5sQuXs2zv22y2z5";
+const char* WIFI_SSID     =  "Talie"; //"ATU-Galway-Guest-Aruba";//"Talie";  //"Three_7F2C30";
+const char* WIFI_PASSWORD =   "N7talie123";// "225299";//"N7talie123"; //"5sQuXs2zv22y2z5";
 
 // My FastAPI endpoint using the laptop's LAN IP
 const char* INGEST_URL    = "http://3.230.116.138:8000/ingest"; // AWS

@@ -1204,92 +1204,144 @@ def _latest_ingest_ts(floorplan_id: int):
 @app.get("/alerts")
 def get_alerts(db: Session = Depends(get_db)):
     """
-    Returns active alerts for all assigned scan points across every building.
-    Three alert types are computed without a dedicated DB table:
-      - never_scanned  (critical): assigned device has never sent data
-      - offline        (critical/warning): no data for >30 min / >10 min
-      - weak_signal    (warning): avg RSSI below -80 dBm
+    Returns floor-level environmental alerts.  Three types, all computed from
+    the latest sensor reading per scan point aggregated across each floor:
+      - poor_air_quality : >50% of scan points with data report "poor" air
+      - high_humidity    : floor average humidity above 70%
+      - low_humidity     : floor average humidity below 30%
+      - poor_signal      : >50% of scan points have "weak" or "low" WiFi signal
+    Severity escalates to "critical" when >75% of points are affected.
     """
-    WARN_THRESHOLD = timedelta(minutes=10)
-    CRIT_THRESHOLD = timedelta(minutes=30)
-    WEAK_RSSI      = -80.0
-    now            = datetime.now(timezone.utc)
+    HUMIDITY_HIGH        = 70.0
+    HUMIDITY_LOW         = 30.0
+    POOR_AIR_FRAC_WARN   = 0.5
+    POOR_AIR_FRAC_CRIT   = 0.75
+    POOR_SIG_FRAC_WARN   = 0.5
+    POOR_SIG_FRAC_CRIT   = 0.75
 
-    rows = (
+    # All floors with their building names
+    floor_rows = (
         db.query(
-            ScanPointDB.id,
-            ScanPointDB.label,
-            ScanPointDB.assigned_node,
-            ScanPointDB.floorplan_id,
+            FloorPlanDB.id,
             FloorPlanDB.floor_name,
             BuildingDB.id.label("building_id"),
             BuildingDB.name.label("building_name"),
-            func.max(WifiScanDB.received_at).label("last_scan_at"),
-            func.avg(WifiScanDB.rssi).label("avg_rssi"),
         )
-        .join(FloorPlanDB, FloorPlanDB.id == ScanPointDB.floorplan_id)
         .join(BuildingDB, BuildingDB.id == FloorPlanDB.building_id)
-        .outerjoin(WifiScanDB, WifiScanDB.scan_point_id == ScanPointDB.id)
-        .filter(ScanPointDB.assigned_node.isnot(None))
-        .group_by(
-            ScanPointDB.id, ScanPointDB.label, ScanPointDB.assigned_node,
-            ScanPointDB.floorplan_id, FloorPlanDB.floor_name,
-            BuildingDB.id, BuildingDB.name,
-        )
         .all()
     )
 
+    # All scan point IDs grouped by floorplan_id
+    sp_rows = db.query(ScanPointDB.id, ScanPointDB.floorplan_id).all()
+    fp_to_sp: dict[int, list[int]] = {}
+    for sp in sp_rows:
+        fp_to_sp.setdefault(sp.floorplan_id, []).append(sp.id)
+
+    all_sp_ids = [sp.id for sp in sp_rows]
+    if not all_sp_ids:
+        return {"alerts": []}
+
+    # ── Latest MQ-135 air_level per scan point ────────────────────────────────
+    mq_ts_subq = (
+        db.query(
+            Mq135ReadingDB.scan_point_id,
+            func.max(Mq135ReadingDB.received_at).label("max_ts"),
+        )
+        .filter(Mq135ReadingDB.scan_point_id.in_(all_sp_ids))
+        .group_by(Mq135ReadingDB.scan_point_id)
+        .subquery()
+    )
+    mq_rows = (
+        db.query(Mq135ReadingDB.scan_point_id, Mq135ReadingDB.air_level)
+        .join(mq_ts_subq,
+              (Mq135ReadingDB.scan_point_id == mq_ts_subq.c.scan_point_id) &
+              (Mq135ReadingDB.received_at   == mq_ts_subq.c.max_ts))
+        .all()
+    )
+    sp_air: dict[int, str] = {r.scan_point_id: r.air_level for r in mq_rows if r.air_level}
+
+    # ── Latest DHT22 humidity per scan point ──────────────────────────────────
+    dht_ts_subq = (
+        db.query(
+            Dht22ReadingDB.scan_point_id,
+            func.max(Dht22ReadingDB.received_at).label("max_ts"),
+        )
+        .filter(Dht22ReadingDB.scan_point_id.in_(all_sp_ids))
+        .group_by(Dht22ReadingDB.scan_point_id)
+        .subquery()
+    )
+    dht_rows = (
+        db.query(Dht22ReadingDB.scan_point_id, Dht22ReadingDB.humidity_pct)
+        .join(dht_ts_subq,
+              (Dht22ReadingDB.scan_point_id == dht_ts_subq.c.scan_point_id) &
+              (Dht22ReadingDB.received_at   == dht_ts_subq.c.max_ts))
+        .all()
+    )
+    sp_hum: dict[int, float] = {
+        r.scan_point_id: r.humidity_pct
+        for r in dht_rows if r.humidity_pct is not None
+    }
+
+    # ── Average RSSI → signal level per scan point ────────────────────────────
+    wifi_agg = (
+        db.query(
+            WifiScanDB.scan_point_id,
+            func.avg(WifiScanDB.rssi).label("avg_rssi"),
+        )
+        .filter(WifiScanDB.scan_point_id.in_(all_sp_ids))
+        .group_by(WifiScanDB.scan_point_id)
+        .all()
+    )
+    def _rssi_level(rssi: float) -> str:
+        if rssi >= -60: return "strong"
+        if rssi >= -70: return "medium"
+        if rssi >= -80: return "low"
+        return "weak"
+    sp_signal: dict[int, str] = {
+        r.scan_point_id: _rssi_level(float(r.avg_rssi))
+        for r in wifi_agg if r.avg_rssi is not None
+    }
+
+    # ── Compute per-floor alerts ───────────────────────────────────────────────
     alerts = []
-    for row in rows:
-        label     = row.label or f"Point {row.id}"
-        node      = row.assigned_node
-        last      = row.last_scan_at
-        avg_rssi  = float(row.avg_rssi) if row.avg_rssi is not None else None
+    for fp in floor_rows:
+        sp_ids     = fp_to_sp.get(fp.id, [])
+        loc        = f"{fp.floor_name} ({fp.building_name})"
+        base       = {"building_id": fp.building_id, "building_name": fp.building_name,
+                      "floorplan_id": fp.id, "floor_name": fp.floor_name}
 
-        if last is not None and last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
+        # Air quality
+        air_levels = [sp_air[sid] for sid in sp_ids if sid in sp_air]
+        if air_levels:
+            total      = len(air_levels)
+            poor_count = sum(1 for lvl in air_levels if lvl == "poor")
+            frac       = poor_count / total
+            if frac >= POOR_AIR_FRAC_WARN:
+                severity = "critical" if frac >= POOR_AIR_FRAC_CRIT else "warning"
+                alerts.append({**base, "severity": severity, "type": "poor_air_quality",
+                    "message": f"{loc}: poor air quality at {poor_count}/{total} scan point{'s' if total>1 else ''}"})
 
-        age = (now - last) if last is not None else None
+        # Humidity
+        hum_values = [sp_hum[sid] for sid in sp_ids if sid in sp_hum]
+        if hum_values:
+            avg_h = sum(hum_values) / len(hum_values)
+            if avg_h > HUMIDITY_HIGH:
+                alerts.append({**base, "severity": "warning", "type": "high_humidity",
+                    "message": f"{loc}: high average humidity ({avg_h:.0f}%)"})
+            elif avg_h < HUMIDITY_LOW:
+                alerts.append({**base, "severity": "warning", "type": "low_humidity",
+                    "message": f"{loc}: low average humidity ({avg_h:.0f}%)"})
 
-        if age is None:
-            alerts.append({
-                "scan_point_id": row.id, "label": label, "node": node,
-                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
-                "building_id": row.building_id, "building_name": row.building_name,
-                "severity": "critical", "type": "never_scanned",
-                "message": f"{label} ({node}) has never sent data",
-                "last_scan_at": None,
-            })
-        elif age > CRIT_THRESHOLD:
-            mins = int(age.total_seconds() // 60)
-            alerts.append({
-                "scan_point_id": row.id, "label": label, "node": node,
-                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
-                "building_id": row.building_id, "building_name": row.building_name,
-                "severity": "critical", "type": "offline",
-                "message": f"{label} ({node}) offline — no data for {mins} min",
-                "last_scan_at": last.isoformat(),
-            })
-        elif age > WARN_THRESHOLD:
-            mins = int(age.total_seconds() // 60)
-            alerts.append({
-                "scan_point_id": row.id, "label": label, "node": node,
-                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
-                "building_id": row.building_id, "building_name": row.building_name,
-                "severity": "warning", "type": "offline",
-                "message": f"{label} ({node}) no data for {mins} min",
-                "last_scan_at": last.isoformat(),
-            })
-
-        if avg_rssi is not None and avg_rssi < WEAK_RSSI:
-            alerts.append({
-                "scan_point_id": row.id, "label": label, "node": node,
-                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
-                "building_id": row.building_id, "building_name": row.building_name,
-                "severity": "warning", "type": "weak_signal",
-                "message": f"{label} ({node}) weak signal {avg_rssi:.1f} dBm",
-                "last_scan_at": last.isoformat() if last else None,
-            })
+        # Signal
+        sig_levels = [sp_signal[sid] for sid in sp_ids if sid in sp_signal]
+        if sig_levels:
+            total      = len(sig_levels)
+            poor_count = sum(1 for lvl in sig_levels if lvl in ("weak", "low"))
+            frac       = poor_count / total
+            if frac >= POOR_SIG_FRAC_WARN:
+                severity = "critical" if frac >= POOR_SIG_FRAC_CRIT else "warning"
+                alerts.append({**base, "severity": severity, "type": "poor_signal",
+                    "message": f"{loc}: poor signal at {poor_count}/{total} scan point{'s' if total>1 else ''}"})
 
     return {"alerts": alerts}
 

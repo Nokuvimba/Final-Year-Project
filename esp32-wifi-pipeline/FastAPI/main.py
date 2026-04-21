@@ -1201,6 +1201,99 @@ def _latest_ingest_ts(floorplan_id: int):
         db.close()
 
 
+@app.get("/alerts")
+def get_alerts(db: Session = Depends(get_db)):
+    """
+    Returns active alerts for all assigned scan points across every building.
+    Three alert types are computed without a dedicated DB table:
+      - never_scanned  (critical): assigned device has never sent data
+      - offline        (critical/warning): no data for >30 min / >10 min
+      - weak_signal    (warning): avg RSSI below -80 dBm
+    """
+    WARN_THRESHOLD = timedelta(minutes=10)
+    CRIT_THRESHOLD = timedelta(minutes=30)
+    WEAK_RSSI      = -80.0
+    now            = datetime.now(timezone.utc)
+
+    rows = (
+        db.query(
+            ScanPointDB.id,
+            ScanPointDB.label,
+            ScanPointDB.assigned_node,
+            ScanPointDB.floorplan_id,
+            FloorPlanDB.floor_name,
+            BuildingDB.id.label("building_id"),
+            BuildingDB.name.label("building_name"),
+            func.max(WifiScanDB.received_at).label("last_scan_at"),
+            func.avg(WifiScanDB.rssi).label("avg_rssi"),
+        )
+        .join(FloorPlanDB, FloorPlanDB.id == ScanPointDB.floorplan_id)
+        .join(BuildingDB, BuildingDB.id == FloorPlanDB.building_id)
+        .outerjoin(WifiScanDB, WifiScanDB.scan_point_id == ScanPointDB.id)
+        .filter(ScanPointDB.assigned_node.isnot(None))
+        .group_by(
+            ScanPointDB.id, ScanPointDB.label, ScanPointDB.assigned_node,
+            ScanPointDB.floorplan_id, FloorPlanDB.floor_name,
+            BuildingDB.id, BuildingDB.name,
+        )
+        .all()
+    )
+
+    alerts = []
+    for row in rows:
+        label     = row.label or f"Point {row.id}"
+        node      = row.assigned_node
+        last      = row.last_scan_at
+        avg_rssi  = float(row.avg_rssi) if row.avg_rssi is not None else None
+
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+
+        age = (now - last) if last is not None else None
+
+        if age is None:
+            alerts.append({
+                "scan_point_id": row.id, "label": label, "node": node,
+                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
+                "building_id": row.building_id, "building_name": row.building_name,
+                "severity": "critical", "type": "never_scanned",
+                "message": f"{label} ({node}) has never sent data",
+                "last_scan_at": None,
+            })
+        elif age > CRIT_THRESHOLD:
+            mins = int(age.total_seconds() // 60)
+            alerts.append({
+                "scan_point_id": row.id, "label": label, "node": node,
+                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
+                "building_id": row.building_id, "building_name": row.building_name,
+                "severity": "critical", "type": "offline",
+                "message": f"{label} ({node}) offline — no data for {mins} min",
+                "last_scan_at": last.isoformat(),
+            })
+        elif age > WARN_THRESHOLD:
+            mins = int(age.total_seconds() // 60)
+            alerts.append({
+                "scan_point_id": row.id, "label": label, "node": node,
+                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
+                "building_id": row.building_id, "building_name": row.building_name,
+                "severity": "warning", "type": "offline",
+                "message": f"{label} ({node}) no data for {mins} min",
+                "last_scan_at": last.isoformat(),
+            })
+
+        if avg_rssi is not None and avg_rssi < WEAK_RSSI:
+            alerts.append({
+                "scan_point_id": row.id, "label": label, "node": node,
+                "floorplan_id": row.floorplan_id, "floor_name": row.floor_name,
+                "building_id": row.building_id, "building_name": row.building_name,
+                "severity": "warning", "type": "weak_signal",
+                "message": f"{label} ({node}) weak signal {avg_rssi:.1f} dBm",
+                "last_scan_at": last.isoformat() if last else None,
+            })
+
+    return {"alerts": alerts}
+
+
 @app.get("/events/floorplan/{floorplan_id}/heatmap")
 async def sse_heatmap_updates(floorplan_id: int):
     """

@@ -99,3 +99,4 @@ mssia-key.pem
 
 
 .DS_Store
+esp32-wifi-pipeline/webapp/playwright-setup-log.html

@@ -122,6 +122,7 @@ export default function AdminStudioClient() {
   const [newFloorName,      setNewFloorName]      = useState("");
   const [floorFile,         setFloorFile]         = useState<File | null>(null);
   const [uploadingFloor,    setUploadingFloor]    = useState(false);
+  const [uploadFloorError,  setUploadFloorError]  = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -336,13 +337,17 @@ export default function AdminStudioClient() {
   async function handleUploadFloor() {
     if (!selectedBuilding || !floorFile || !newFloorName.trim()) return;
     setUploadingFloor(true);
+    setUploadFloorError("");
     try {
       const fp = await uploadFloorPlan(selectedBuilding.id, newFloorName.trim(), floorFile);
       setFloorplans(prev => [...prev, fp]);
       setShowFloorModal(false);
       setNewFloorName(""); setFloorFile(null);
       await doSelectFloorplan(fp);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Upload failed";
+      setUploadFloorError(msg);
+    }
     finally { setUploadingFloor(false); }
   }
 
@@ -814,18 +819,26 @@ export default function AdminStudioClient() {
       )}
 
       {showFloorModal && (
-        <ModalShell title="Upload Floor Plan" onClose={() => setShowFloorModal(false)}>
+        <ModalShell title="Upload Floor Plan" onClose={() => { setShowFloorModal(false); setUploadFloorError(""); }}>
           <input value={newFloorName} onChange={e => setNewFloorName(e.target.value)}
             placeholder='Floor name, e.g. "Ground Floor"' autoFocus style={css.modalInput} />
           <div onClick={() => fileInputRef.current?.click()} style={css.dropZone}>
             <div style={{ fontSize:"1.5rem", marginBottom:"0.35rem" }}>🗺️</div>
             <div style={{ fontSize:"0.79rem", color: floorFile ? "#60a5fa" : "#64748b", fontWeight:600 }}>
-              {floorFile ? floorFile.name : "Click to choose PNG or JPG"}
+              {floorFile ? floorFile.name : "Click to choose PNG, JPG or JPEG"}
             </div>
           </div>
-          <input ref={fileInputRef} type="file" accept="image/png,image/jpeg"
-            style={{ display:"none" }} onChange={e => setFloorFile(e.target.files?.[0] ?? null)} />
-          <ModalFooter onCancel={() => setShowFloorModal(false)} onConfirm={handleUploadFloor}
+          {/* Accept includes explicit extensions so .jpeg files appear in the OS file picker */}
+          <input ref={fileInputRef} type="file"
+            accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+            style={{ display:"none" }}
+            onChange={e => { setFloorFile(e.target.files?.[0] ?? null); setUploadFloorError(""); }} />
+          {uploadFloorError && (
+            <div style={{ fontSize:"0.78rem", color:"#f87171", background:"rgba(248,113,113,0.08)", border:"1px solid rgba(248,113,113,0.25)", borderRadius:7, padding:"0.45rem 0.75rem" }}>
+              ⚠ {uploadFloorError}
+            </div>
+          )}
+          <ModalFooter onCancel={() => { setShowFloorModal(false); setUploadFloorError(""); }} onConfirm={handleUploadFloor}
             disabled={!newFloorName.trim() || !floorFile || uploadingFloor}
             label={uploadingFloor ? "Uploading…" : "Upload Floor Plan"} />
         </ModalShell>
